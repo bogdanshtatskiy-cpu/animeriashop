@@ -28,6 +28,8 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm test
+      # Vercel's function loader does not support require() of ES modules.
+      - run: node --no-experimental-require-module --input-type=module -e "await import('firebase-admin/auth')"
       - run: npm audit --audit-level=high
       - run: npx playwright install --with-deps chromium webkit
       - run: npm exec --yes --package firebase-tools@14.27.0 -- firebase emulators:exec --only firestore,auth --project demo-animeria "npm run test:e2e"
