@@ -242,7 +242,6 @@ fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
 .dialog-layout { min-height: 0; overflow: auto; overscroll-behavior: contain; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .98fr); gap: 19px; padding: 13px; }
 .detail-gallery { min-width: 0; }
 .detail-media { position: relative; aspect-ratio: 1; border-radius: 17px; overflow: hidden; background: #101711; touch-action: pan-y; }
-.detail-media img { object-fit: contain; }
 .detail-photo-button { position: absolute; inset: 0; padding: 0; border: 0; width: 100%; background: transparent; cursor: zoom-in; }
 .detail-photo-button:focus-visible { outline-offset: -4px; }
 .detail-photo-expand { position: absolute; inset: auto 9px 9px auto; display: grid; place-items: center; width: 44px; height: 44px; color: var(--gold); border: 1px solid #758270; border-radius: 12px; background: #18221bea; }
@@ -497,7 +496,6 @@ textarea.field { min-height: 95px; height: auto; resize: vertical; }
   .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .product-dialog { margin: auto auto max(7px, var(--inset-bottom)); max-width: min(460px, calc(100vw - 16px - var(--inset-left) - var(--inset-right))); max-height: calc(100dvh - var(--inset-top) - var(--inset-bottom) - 18px); }
   .dialog-layout { grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 9px; }
-  .detail-media { aspect-ratio: 1.3; }
   .detail-copy { padding: 7px 8px 9px; }
   .detail-purchase-row { grid-template-columns: auto minmax(0, 1fr); }
   .manual-line { grid-template-columns: minmax(0, .75fr) minmax(0, 1fr) auto; }
