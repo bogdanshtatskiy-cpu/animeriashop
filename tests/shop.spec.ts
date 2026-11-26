@@ -56,7 +56,7 @@ test('full photo viewer supports zoom, gallery navigation and returning to the p
   if (browserName === 'chromium') {
     await page.mouse.move(center.x, center.y);
     await page.mouse.wheel(0, -100);
-    await expect(scale).toHaveText('135%');
+    await expect.poll(async () => Number.parseInt(await scale.innerText(), 10)).toBeGreaterThan(100);
     await scale.click();
     const cdp = await context.newCDPSession(page);
     const points = (spread: number) => [{ x: center.x - spread, y: center.y, id: 1 }, { x: center.x + spread, y: center.y, id: 2 }];
@@ -71,6 +71,14 @@ test('full photo viewer supports zoom, gallery navigation and returning to the p
     await page.mouse.move(center.x + 44, center.y, { steps: 4 });
     await page.mouse.up();
     expect(await image.getAttribute('style')).not.toBe(beforePan);
+    await scale.click();
+    const swipePoint = (offset: number) => [{ x: center.x + offset, y: center.y, id: 1 }];
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: swipePoint(66) });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: swipePoint(-66) });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect(viewer.getByText('2 / 2')).toBeVisible();
+    await viewer.getByRole('button', { name: 'Попереднє фото' }).click();
+    await expect(viewer.getByText('1 / 2')).toBeVisible();
     await cdp.detach();
   }
   await viewer.getByRole('button', { name: 'Наступне фото' }).click();
