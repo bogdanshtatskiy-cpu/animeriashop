@@ -40,6 +40,10 @@ export default function DeliverySearch({ label, placeholder, value, onChange, ac
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [action, attempt, canSearch, cityRef, term]);
 
+  useEffect(() => {
+    if (expanded && active >= 0) document.getElementById(id + '-' + active)?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  }, [active, expanded, id]);
+
   const select = (option: DeliveryOption) => {
     onChange(option);
     setQuery('');

@@ -26,7 +26,8 @@ export default function App() {
   const loadFavorites = useFavoritesStore(state => state.loadFavorites);
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
-  const activeTab = links.findIndex(({ to }) => to === (pathname.replace(/\/+$/, '') || '/'));
+  const route = pathname.replace(/\/+$/, '') || '/';
+  const activeTab = links.findIndex(({ to }) => to === route);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   useEffect(() => {
@@ -58,11 +59,31 @@ export default function App() {
   }, [watchProducts, loadFavorites]);
 
   useEffect(() => {
+    const app = telegram();
     const viewport = window.visualViewport;
-    const resize = () => setKeyboardOpen(Boolean(viewport && viewport.height < window.innerHeight * 0.76 && viewport.scale <= 1.05));
-    resize();
-    viewport?.addEventListener('resize', resize);
-    return () => viewport?.removeEventListener('resize', resize);
+    let fullHeight = 0;
+    let previousWidth = window.innerWidth;
+    const updateKeyboard = () => {
+      if (viewport && viewport.scale > 1.05) return;
+      const typing = document.activeElement?.matches('input:not([type=checkbox], [type=radio], [type=button], [type=file]), textarea, [contenteditable=true]');
+      const telegramHeight = app?.initData ? app.viewportHeight : undefined;
+      const height = Math.min(window.innerHeight, viewport?.height ?? Infinity, telegramHeight || Infinity);
+      if (!typing || previousWidth !== window.innerWidth) fullHeight = height;
+      else fullHeight = Math.max(fullHeight, height);
+      previousWidth = window.innerWidth;
+      setKeyboardOpen(Boolean(typing && fullHeight - height >= 100));
+    };
+    updateKeyboard();
+    document.addEventListener('focusin', updateKeyboard);
+    window.addEventListener('resize', updateKeyboard);
+    viewport?.addEventListener('resize', updateKeyboard);
+    app?.onEvent('viewportChanged', updateKeyboard);
+    return () => {
+      document.removeEventListener('focusin', updateKeyboard);
+      window.removeEventListener('resize', updateKeyboard);
+      viewport?.removeEventListener('resize', updateKeyboard);
+      app?.offEvent('viewportChanged', updateKeyboard);
+    };
   }, []);
 
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
@@ -105,7 +126,7 @@ export default function App() {
           </Link>
         </div>
       </header>
-      <main className="shell shop-main" id="main-content">
+      <main className="shell shop-main" id="main-content" data-keyboard-open={keyboardOpen}>
         <Suspense fallback={<div className="empty-state" role="status">Завантажуємо…</div>}>
           <div className="route-frame" key={pathname}>
             <Routes>
@@ -119,17 +140,19 @@ export default function App() {
           </div>
         </Suspense>
       </main>
-      {!keyboardOpen && <nav className="glass-nav" aria-label="Розділи магазину" style={{ '--active-tab': Math.max(0, activeTab) } as CSSProperties}>
-        <span aria-hidden="true" className="glass-indicator" data-visible={activeTab >= 0}>
-          {activeTab >= 0 && <span key={activeTab} className="glass-lens" />}
-        </span>
-        {links.map(({ to, label, Icon }) => (
-          <NavLink end={to === '/'} key={to} to={to} className="glass-tab">
-            <span className="nav-icon"><Icon size={21} strokeWidth={1.65} />{to === '/cart' && count > 0 && <span className="nav-count">{count > 99 ? '99+' : count}</span>}</span>
-            <span>{label}</span>
-          </NavLink>
-        ))}
-      </nav>}
+      {!keyboardOpen && <div className="shop-nav-wrap" data-checkout={route === '/cart'}>
+        <nav className="glass-nav" aria-label="Розділи магазину" style={{ '--active-tab': Math.max(0, activeTab) } as CSSProperties}>
+          <span aria-hidden="true" className="glass-indicator" data-visible={activeTab >= 0}>
+            {activeTab >= 0 && <span key={activeTab} className="glass-lens" />}
+          </span>
+          {links.map(({ to, label, Icon }) => (
+            <NavLink end={to === '/'} key={to} to={to} className="glass-tab">
+              <span className="nav-icon"><Icon size={21} strokeWidth={1.65} />{to === '/cart' && count > 0 && <span className="nav-count">{count > 99 ? '99+' : count}</span>}</span>
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </nav>
+      </div>}
     </>
   );
 }

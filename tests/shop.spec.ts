@@ -33,6 +33,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('mobile catalog, synced favorites, checkout, and order history', async ({ page }) => {
+  await page.setViewportSize({ width: 381, height: 610 });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Чарівні палички', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Паличка Герміони' })).toBeVisible();
@@ -72,17 +73,33 @@ test('mobile catalog, synced favorites, checkout, and order history', async ({ p
 
   await page.getByRole('textbox', { name: 'Телефон' }).fill('0671234567');
   const city = page.getByRole('combobox', { name: 'Місто' });
+  const branch = page.getByRole('combobox', { name: 'Відділення або поштомат' });
+  const [cityBox, branchBox] = await Promise.all([city.boundingBox(), branch.boundingBox()]);
+  expect(branchBox!.x).toBeCloseTo(cityBox!.x);
+  expect(branchBox!.width).toBeCloseTo(cityBox!.width);
+  expect(branchBox!.y).toBeGreaterThan(cityBox!.y + cityBox!.height);
+  await expect(branch).toHaveAttribute('placeholder', 'Спочатку оберіть місто');
+  const checkoutNav = page.getByRole('navigation');
+  await city.focus();
+  await page.setViewportSize({ width: 381, height: 390 });
+  await expect(checkoutNav).toHaveCount(0);
+  await page.setViewportSize({ width: 381, height: 610 });
+  await expect(checkoutNav).toBeVisible();
   await city.fill('Льв');
   await expect(page.getByRole('option', { name: 'Львів', exact: true })).toBeVisible();
   await city.press('ArrowDown');
   await city.press('Enter');
   await expect(city).toHaveValue('Львів');
-  await page.getByRole('combobox', { name: 'Відділення або поштомат' }).fill('12');
+  await branch.fill('12');
   await page.getByRole('option', { name: 'Відділення №12' }).click();
   await page.getByRole('textbox', { name: 'Промокод' }).fill('WAND10');
   await page.getByRole('button', { name: 'Застосувати' }).click();
   await expect(page.getByText('Застосовано WAND10')).toBeVisible();
-  await page.getByRole('button', { name: 'Оформити замовлення' }).click();
+  const submit = page.getByRole('button', { name: 'Оформити замовлення' });
+  await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+  const [submitBox, dockBox] = await Promise.all([submit.boundingBox(), page.locator('.shop-nav-wrap').boundingBox()]);
+  expect(submitBox!.y + submitBox!.height).toBeLessThan(dockBox!.y);
+  await submit.click();
   await expect(page.getByRole('heading', { name: 'Замовлення прийнято' })).toBeVisible();
   await expect(page.getByText(/540\s*грн/)).toBeVisible();
   await page.getByRole('link', { name: 'Мої замовлення' }).click();

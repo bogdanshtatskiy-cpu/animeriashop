@@ -108,6 +108,7 @@ fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
 .header-bag .nav-count { top: -2px; right: -2px; }
 .text-button { border: 0; padding: 3px 0; color: var(--gold); background: transparent; text-decoration: underline; text-underline-offset: 3px; }
 
+.shop-nav-wrap { display: contents; }
 .glass-nav {
   position: fixed;
   z-index: 5;
@@ -284,8 +285,8 @@ fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
 .detail-status { color: var(--gold); font-size: 12px; text-align: center; }
 .detail-status:not(:empty) { margin-top: 4px; }
 
-.checkout-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: start; gap: 17px; }
-.checkout-main { display: grid; gap: 15px; }
+.checkout-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: start; gap: 16px; }
+.checkout-main { display: grid; gap: 16px; }
 .checkout-main h2 { display: flex; align-items: center; gap: 9px; }
 .checkout-main h2 svg { color: var(--gold); }
 .cart-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--line); }
@@ -311,6 +312,8 @@ textarea.field { min-height: 95px; height: auto; resize: vertical; }
 .phone-field > span { position: absolute; top: 50%; left: 11px; transform: translateY(-50%); color: var(--gold); font-size: 14px; }
 .phone-field .field { padding-left: 55px; }
 .address-field { position: relative; display: grid; align-content: start; gap: 5px; min-width: 0; }
+.checkout-layout .field::placeholder { color: var(--subtle); opacity: 1; }
+.address-field .field:disabled { opacity: 1; background: #1d271e; border-color: var(--line); }
 .address-results { position: absolute; inset: 100% 0 auto; z-index: 3; max-height: 230px; overflow: auto; overscroll-behavior: contain; margin-top: 4px; border: 1px solid #647561; border-radius: 12px; background: #212c22; box-shadow: 0 10px 24px #0009; }
 .address-results ul { list-style: none; margin: 0; padding: 0; }
 .address-results li { min-height: 42px; cursor: pointer; padding: 9px 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
@@ -319,7 +322,7 @@ textarea.field { min-height: 95px; height: auto; resize: vertical; }
 .address-message { padding: 10px; color: var(--muted); }
 .checkout-summary h2 { margin-bottom: 14px; }
 .promo-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: center; margin-top: 5px; }
-.promo-row .button { padding-inline: 12px; }
+.promo-row .button { min-height: 46px; padding-inline: 12px; }
 .summary-totals { margin: 16px 0; }
 .summary-totals div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 4px 0; }
 .summary-totals dt { color: var(--muted); }
@@ -327,7 +330,8 @@ textarea.field { min-height: 95px; height: auto; resize: vertical; }
 .summary-totals .summary-total { margin-top: 9px; border-top: 1px solid var(--line); padding-top: 12px; }
 .summary-total dt { color: var(--ink); font-weight: 800; }
 .summary-total dd { font-size: 23px; color: var(--gold); white-space: nowrap; }
-.checkout-cta { width: 100%; justify-content: space-between; }
+.checkout-cta { position: relative; width: 100%; padding-inline: 36px; white-space: normal; text-align: center; }
+.checkout-cta svg { position: absolute; inset-inline-end: 13px; }
 .recovery-button { width: 100%; margin-bottom: 9px; white-space: normal; }
 .order-success { min-height: 340px; margin-top: 26px; }
 .success-icon, .profile-avatar { display: grid; place-items: center; width: 55px; height: 55px; border: 1px solid #667c5e; border-radius: 50%; background: #2d412c; color: var(--success); flex: none; }
@@ -423,6 +427,20 @@ textarea.field { min-height: 95px; height: auto; resize: vertical; }
   .workshop-item strong { font-size: 10px; line-height: 1.35; }
   .workshop-item small { font-size: 9px; line-height: 1.35; }
   .checkout-layout, .admin-layout { grid-template-columns: minmax(0, 1fr); }
+  .shipping-fields .address-field { grid-column: 1 / -1; }
+  .shipping-fields .address-results { position: static; margin-top: 0; max-height: min(190px, 35dvh); box-shadow: none; }
+  html:has(.shop-nav-wrap[data-checkout='true']) { scroll-padding-bottom: calc(101px + var(--inset-bottom)); }
+  .shop-main[data-keyboard-open='true'] { padding-bottom: 24px; }
+  .shop-nav-wrap[data-checkout='true'] {
+    position: fixed;
+    z-index: 5;
+    inset: auto 0 0;
+    display: grid;
+    padding: 9px max(var(--page-margin), var(--inset-right)) calc(12px + var(--inset-bottom)) max(var(--page-margin), var(--inset-left));
+    border-top: 1px solid var(--line);
+    background: var(--page);
+  }
+  .shop-nav-wrap[data-checkout='true'] .glass-nav { position: relative; inset: auto; width: min(100%, 440px); }
   .history-grid { grid-template-columns: minmax(0, 1fr); }
   .sort-control { padding-inline: 8px; gap: 5px; }
   .sort-control select { max-width: 114px; }
@@ -462,9 +480,12 @@ textarea.field { min-height: 95px; height: auto; resize: vertical; }
 @media (max-width: 360px) {
   .workshop-item small { display: none; }
   .workshop-item { min-height: 60px; }
-  .shipping-fields, .admin-field-grid { grid-template-columns: minmax(0, 1fr); }
+  .admin-field-grid { grid-template-columns: minmax(0, 1fr); }
   .hero-description { max-width: 177px; }
   .glass-tab { font-size: 10px; }
+}
+@media (max-width: 340px) {
+  .shipping-fields, .promo-row { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

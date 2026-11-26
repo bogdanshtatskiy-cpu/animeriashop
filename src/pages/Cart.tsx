@@ -185,8 +185,8 @@ export default function Cart() {
                   const digits = event.target.value.replace(/\D/g, '');
                   setPhone((digits.length >= 12 && digits.startsWith('380') ? digits.slice(3) : digits.length === 10 && digits.startsWith('0') ? digits.slice(1) : digits).slice(0, 9));
                 }} /></span></label>
-              <DeliverySearch action="cities" label="Місто" placeholder="Введіть назву міста" value={city} onChange={option => { setCity(option); setBranch(null); }} disabled={Boolean(busy)} />
-              <DeliverySearch key={city?.id ?? 'none'} action="branches" label="Відділення або поштомат" placeholder="Введіть номер чи адресу" value={branch}
+              <DeliverySearch action="cities" label="Місто" placeholder="Наприклад, Київ" value={city} onChange={option => { setCity(option); setBranch(null); }} disabled={Boolean(busy)} />
+              <DeliverySearch key={city?.id ?? 'none'} action="branches" label="Відділення або поштомат" placeholder={city ? 'Номер або адреса' : 'Спочатку оберіть місто'} value={branch}
                 onChange={setBranch} cityRef={city?.id} disabled={!city || Boolean(busy)} />
             </div>
           </section>}
