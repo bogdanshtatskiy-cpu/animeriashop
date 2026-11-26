@@ -94,7 +94,7 @@ export default function App() {
       <header className="shop-header">
         <div className="shell header-inner">
           <Link className="brand" to="/" aria-label="Animeria — до каталогу">
-            <img src="/mark.svg" alt="" width="46" height="46" />
+            <img src="/logo.png" alt="" width="46" height="46" />
             <span><strong>Animeria</strong><small>МАЙСТЕРНЯ 3D-ДРУКУ</small></span>
           </Link>
           <Link className="header-bag icon-button" to="/cart" aria-label={count ? 'Кошик, позицій: ' + count : 'Кошик'}>

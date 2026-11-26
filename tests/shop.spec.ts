@@ -18,9 +18,9 @@ test.beforeEach(async ({ page }) => {
     db.doc('products/wand-test').set({
       title: 'Паличка Герміони', character: 'Герміона', price: 450, category: 'Чарівні палички', stock: 2,
       material: 'Фотополімерна смола', technology: 'resin', dimensions: '32 см', finish: 'Ручне фарбування',
-      colors: ['Мідь', 'Бронза'], imageUrls: ['/media/atelier.webp', '/mark.svg'], featured: true, available: true,
+      colors: ['Мідь', 'Бронза'], imageUrls: ['/media/atelier.webp', '/logo.png'], featured: true, available: true,
     }),
-    db.doc('products/other-test').set({ title: 'Брелок майстерні', price: 120, category: 'Аксесуари', imageUrl: '/mark.svg' }),
+    db.doc('products/other-test').set({ title: 'Брелок майстерні', price: 120, category: 'Аксесуари', imageUrl: '/logo.png' }),
     db.doc('promocodes/WAND10').set({ code: 'WAND10', discountType: 'percent', discountValue: 10, usageCount: 0, usageLimit: 1 }),
     getAuth(project).getUser(ADMIN_UID).catch(() => getAuth(project).createUser({ uid: ADMIN_UID, email, password })),
   ]);

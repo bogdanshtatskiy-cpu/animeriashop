@@ -88,7 +88,7 @@ fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
 .shop-header { padding-top: var(--inset-top); }
 .header-inner { min-height: 83px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .brand { display: inline-flex; align-items: center; gap: 11px; white-space: nowrap; }
-.brand img { width: 44px; height: 44px; }
+.brand img { width: 44px; height: 44px; object-fit: contain; }
 .brand strong, .brand small { display: block; }
 .brand strong { font: 540 27px/.98 var(--display); letter-spacing: -.045em; }
 .brand small { margin-top: 6px; color: var(--subtle); font-size: 8px; font-weight: 800; letter-spacing: .18em; }
