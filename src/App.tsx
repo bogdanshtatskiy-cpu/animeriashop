@@ -100,7 +100,8 @@ export default function App() {
     }
     const goBack = () => {
       if (product) {
-        params.delete('productId');
+        if (params.get('photo') === 'full') params.delete('photo');
+        else params.delete('productId');
         navigate({ pathname, search: params.toString() }, { replace: true });
       } else {
         navigate(pathname === '/admin' ? '/profile' : '/');

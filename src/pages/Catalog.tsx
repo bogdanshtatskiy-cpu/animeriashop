@@ -52,7 +52,21 @@ export default function Catalog() {
   }, [productId, setParams]);
 
   function closeProduct() {
-    setParams(previous => { const next = new URLSearchParams(previous); next.delete('productId'); return next; }, { replace: true });
+    setParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.delete('productId');
+      next.delete('photo');
+      return next;
+    }, { replace: true });
+  }
+
+  function setPhotoOpen(open: boolean) {
+    setParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (open) next.set('photo', 'full');
+      else next.delete('photo');
+      return next;
+    }, { replace: true });
   }
 
   return <>
@@ -102,7 +116,8 @@ export default function Catalog() {
           <button type="button" className="button secondary" onClick={() => { setCategory(''); setQuery(''); }}>Усі вироби</button>
         </div>}
     </section>
-    {selected && <ProductDetail key={selected.id} product={selected} onClose={closeProduct} onAdd={(product, color, gift) => {
+    {selected && <ProductDetail key={selected.id} product={selected} photoOpen={params.get('photo') === 'full'}
+      onPhotoOpenChange={setPhotoOpen} onClose={closeProduct} onAdd={(product, color, gift) => {
       const added = addItem(product, color, gift);
       if (added) haptic();
       return added;

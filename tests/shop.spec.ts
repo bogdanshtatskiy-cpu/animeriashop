@@ -28,8 +28,63 @@ test.beforeEach(async ({ page }) => {
   ]);
   await page.route('https://telegram.org/js/telegram-web-app.js', route => route.fulfill({
     contentType: 'text/javascript',
-    body: 'window.Telegram={WebApp:{initData:' + JSON.stringify(signUser(777)) + ',initDataUnsafe:{user:{id:777,first_name:"Ada",last_name:"Test"}},ready(){},expand(){},isVersionAtLeast(){return true},setHeaderColor(){},setBackgroundColor(){},setBottomBarColor(){},onEvent(){},offEvent(){},BackButton:{show(){},hide(){},onClick(){},offClick(){}}}};',
+    body: 'window.Telegram={WebApp:{initData:' + JSON.stringify(signUser(777)) + ',initDataUnsafe:{user:{id:777,first_name:"Ada",last_name:"Test"}},ready(){},expand(){},isVersionAtLeast(){return true},isVerticalSwipesEnabled:true,disableVerticalSwipes(){this.isVerticalSwipesEnabled=false},enableVerticalSwipes(){this.isVerticalSwipesEnabled=true},setHeaderColor(){},setBackgroundColor(){},setBottomBarColor(){},onEvent(){},offEvent(){},BackButton:{show(){},hide(){},onClick(fn){window.addEventListener("mock-telegram-back",fn)},offClick(fn){window.removeEventListener("mock-telegram-back",fn)}}}};',
   }));
+});
+
+test('full photo viewer supports zoom, gallery navigation and returning to the product', async ({ page, context, browserName }) => {
+  await page.setViewportSize({ width: 381, height: 610 });
+  await page.goto('/?productId=wand-test&photo=full');
+  const detail = page.getByRole('dialog', { name: 'Паличка Герміони', exact: true });
+  const viewer = page.getByRole('dialog', { name: /Перегляд фото/ });
+  const stage = viewer.locator('.photo-viewer-stage');
+  const scale = viewer.getByRole('button', { name: /Скинути масштаб/ });
+  const open = detail.getByRole('button', { name: 'Відкрити фото на весь екран' });
+  await expect(viewer).toBeVisible();
+  expect(await page.evaluate(() => window.Telegram?.WebApp?.isVerticalSwipesEnabled)).toBe(false);
+  expect(await viewer.boundingBox()).toEqual({ x: 0, y: 0, width: 381, height: 610 });
+  await viewer.getByRole('button', { name: 'Збільшити фото' }).click();
+  await expect(scale).toHaveText('150%');
+  await scale.click();
+  await expect(scale).toHaveText('100%');
+  const frame = (await stage.boundingBox())!;
+  const center = { x: Math.round(frame.x + frame.width / 2), y: Math.round(frame.y + frame.height / 2) };
+  await page.touchscreen.tap(center.x, center.y);
+  await page.touchscreen.tap(center.x, center.y);
+  await expect(scale).toHaveText('250%');
+  await scale.click();
+  if (browserName === 'chromium') {
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.wheel(0, -100);
+    await expect(scale).toHaveText('135%');
+    await scale.click();
+    const cdp = await context.newCDPSession(page);
+    const points = (spread: number) => [{ x: center.x - spread, y: center.y, id: 1 }, { x: center.x + spread, y: center.y, id: 2 }];
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(32) });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(68) });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect(scale).toHaveText('213%');
+    const image = stage.locator('img');
+    const beforePan = await image.getAttribute('style');
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down();
+    await page.mouse.move(center.x + 44, center.y, { steps: 4 });
+    await page.mouse.up();
+    expect(await image.getAttribute('style')).not.toBe(beforePan);
+    await cdp.detach();
+  }
+  await viewer.getByRole('button', { name: 'Наступне фото' }).click();
+  await expect(viewer.getByText('2 / 2')).toBeVisible();
+  await expect(scale).toHaveText('100%');
+  await page.evaluate(() => window.dispatchEvent(new Event('mock-telegram-back')));
+  await expect(viewer).toHaveCount(0);
+  expect(await page.evaluate(() => window.Telegram?.WebApp?.isVerticalSwipesEnabled)).toBe(true);
+  await expect(detail.getByRole('button', { name: 'Фото 2' })).toHaveAttribute('aria-pressed', 'true');
+  await open.click();
+  await expect(viewer.getByText('2 / 2')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+  await expect(open).toBeFocused();
 });
 
 test('mobile catalog, synced favorites, checkout, and order history', async ({ page }) => {

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check, Gift, Heart, ImageIcon, Share2, ShoppingBag, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Gift, Heart, ImageIcon, Maximize2, Share2, ShoppingBag, X } from 'lucide-react';
 import { configuredStock, finishStock, giftPrice, money, toKop, unitPrice } from '../lib/commerce';
 import { haptic, telegramLink } from '../lib/telegram';
 import { useFavoritesStore } from '../store/useFavoritesStore';
 import type { Product } from '../store/useCartStore';
+import PhotoViewer from './PhotoViewer';
 
 export const WAND_CATEGORY = 'Чарівні палички';
 export const isWand = (product: Product) => /пал[иіы]ч|wand/i.test((product.category ?? '') + ' ' + product.title) || Boolean(product.character);
@@ -63,9 +64,18 @@ export function ProductCard({ product, eager }: { product: Product; eager?: bool
   </article>;
 }
 
-export function ProductDetail({ product, onClose, onAdd }: { product: Product; onClose: () => void; onAdd: (product: Product, color?: string, gift?: boolean) => boolean }) {
+interface ProductDetailProps {
+  product: Product;
+  photoOpen: boolean;
+  onPhotoOpenChange: (open: boolean) => void;
+  onClose: () => void;
+  onAdd: (product: Product, color?: string, gift?: boolean) => boolean;
+}
+
+export function ProductDetail({ product, photoOpen, onPhotoOpenChange, onClose, onAdd }: ProductDetailProps) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const touchStart = useRef<number | null>(null);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const lastSwipe = useRef(-Infinity);
   const [index, setIndex] = useState(0);
   const [color, setColor] = useState(product.colors?.[0] ?? '');
   const [status, setStatus] = useState('');
@@ -82,8 +92,9 @@ export function ProductDetail({ product, onClose, onAdd }: { product: Product; o
   const gallery = photos(product);
   const slide = Math.min(index, Math.max(0, gallery.length - 1));
   const move = (direction: number) => setIndex((slide + direction + gallery.length) % gallery.length);
+  const currentPhoto = gallery[slide];
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = dialog.current;
     if (!node) return;
     const active = document.activeElement as HTMLElement | null;
@@ -116,7 +127,7 @@ export function ProductDetail({ product, onClose, onAdd }: { product: Product; o
     ['Оздоблення', product.finish],
   ].filter(([, value]) => value);
 
-  return <dialog ref={dialog} className="product-dialog" aria-labelledby="product-title" onCancel={event => { event.preventDefault(); onClose(); }}
+  const productDialog = <dialog ref={dialog} className="product-dialog" aria-labelledby="product-title" onCancel={event => { event.preventDefault(); onClose(); }}
     onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="product-sheet">
       <div className="detail-tools">
@@ -125,14 +136,32 @@ export function ProductDetail({ product, onClose, onAdd }: { product: Product; o
       </div>
       <div className="dialog-layout">
         <div className="detail-gallery">
-          <div className="detail-media" onTouchStart={event => { touchStart.current = event.touches[0].clientX; }}
-            onTouchEnd={event => {
-              if (touchStart.current === null || gallery.length < 2) return;
-              const diff = event.changedTouches[0].clientX - touchStart.current;
-              if (Math.abs(diff) > 45) move(diff < 0 ? 1 : -1);
-              touchStart.current = null;
-            }}>
-            <ProductPhoto product={product} src={gallery[slide]} eager />
+          <div className="detail-media">
+            {currentPhoto ? <button className="detail-photo-button" type="button" aria-label="Відкрити фото на весь екран"
+              onClick={event => {
+                if (event.detail !== 0 && performance.now() - lastSwipe.current <= 300) return;
+                event.currentTarget.focus({ preventScroll: true });
+                onPhotoOpenChange(true);
+              }}
+              onTouchStart={event => {
+                const point = event.touches[0];
+                touchStart.current = event.touches.length === 1 ? { x: point.clientX, y: point.clientY } : null;
+              }}
+              onTouchEnd={event => {
+                const start = touchStart.current;
+                touchStart.current = null;
+                if (!start || gallery.length < 2) return;
+                const point = event.changedTouches[0];
+                const dx = point.clientX - start.x;
+                if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(point.clientY - start.y) * 1.3) {
+                  lastSwipe.current = performance.now();
+                  move(dx < 0 ? 1 : -1);
+                }
+              }}
+              onTouchCancel={() => { touchStart.current = null; }}>
+              <ProductPhoto product={product} src={currentPhoto} eager />
+              <span className="detail-photo-expand"><Maximize2 size={18} strokeWidth={1.7} aria-hidden="true" /></span>
+            </button> : <ProductPhoto product={product} eager />}
             {gallery.length > 1 && <>
               <button type="button" className="icon-button gallery-prev" onClick={() => move(-1)} aria-label="Попереднє фото"><ArrowLeft size={19} /></button>
               <button type="button" className="icon-button gallery-next" onClick={() => move(1)} aria-label="Наступне фото"><ArrowRight size={19} /></button>
@@ -186,4 +215,10 @@ export function ProductDetail({ product, onClose, onAdd }: { product: Product; o
       </div>
     </div>
   </dialog>;
+
+  return <>
+    {productDialog}
+    {photoOpen && currentPhoto && <PhotoViewer src={currentPhoto} title={product.title} index={slide} count={gallery.length}
+      onClose={() => onPhotoOpenChange(false)} onMove={move} />}
+  </>;
 }
