@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Heart, LayoutGrid, ShoppingBag, UserRound } from 'lucide-react';
 import Catalog from './pages/Catalog';
@@ -25,6 +26,7 @@ export default function App() {
   const loadFavorites = useFavoritesStore(state => state.loadFavorites);
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
+  const activeTab = links.findIndex(({ to }) => to === (pathname.replace(/\/+$/, '') || '/'));
   const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   useEffect(() => {
@@ -105,17 +107,20 @@ export default function App() {
       </header>
       <main className="shell shop-main" id="main-content">
         <Suspense fallback={<div className="empty-state" role="status">Завантажуємо…</div>}>
-          <Routes>
-            <Route path="/" element={<Catalog />} />
-            <Route path="/cart" element={<Cart />} />
-            <Route path="/favorites" element={<Favorites />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/admin" element={<Admin />} />
-            <Route path="*" element={<div className="empty-state"><h1>Сторінку не знайдено</h1><Link to="/" className="button primary">До каталогу</Link></div>} />
-          </Routes>
+          <div className="route-frame" key={pathname}>
+            <Routes>
+              <Route path="/" element={<Catalog />} />
+              <Route path="/cart" element={<Cart />} />
+              <Route path="/favorites" element={<Favorites />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/admin" element={<Admin />} />
+              <Route path="*" element={<div className="empty-state"><h1>Сторінку не знайдено</h1><Link to="/" className="button primary">До каталогу</Link></div>} />
+            </Routes>
+          </div>
         </Suspense>
       </main>
-      {!keyboardOpen && <nav className="glass-nav" aria-label="Розділи магазину">
+      {!keyboardOpen && <nav className="glass-nav" aria-label="Розділи магазину" style={{ '--active-tab': Math.max(0, activeTab) } as CSSProperties}>
+        <span aria-hidden="true" className="glass-indicator" data-visible={activeTab >= 0} />
         {links.map(({ to, label, Icon }) => (
           <NavLink end={to === '/'} key={to} to={to} className="glass-tab">
             <span className="nav-icon"><Icon size={21} strokeWidth={1.65} />{to === '/cart' && count > 0 && <span className="nav-count">{count > 99 ? '99+' : count}</span>}</span>
