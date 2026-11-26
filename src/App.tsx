@@ -1,112 +1,128 @@
-import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Routes, Route, NavLink } from 'react-router-dom';
-import WebApp from '@twa-dev/sdk';
-import { LayoutGrid, ShoppingCart, Heart, User } from 'lucide-react';
-import styles from './App.module.css';
-
-// Pages
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Heart, LayoutGrid, ShoppingBag, UserRound } from 'lucide-react';
 import Catalog from './pages/Catalog';
-import Cart from './pages/Cart';
-import Profile from './pages/Profile';
-import Admin from './pages/Admin';
-import Favorites from './pages/Favorites';
+import { telegram } from './lib/telegram';
 import { useCartStore } from './store/useCartStore';
+import { useFavoritesStore } from './store/useFavoritesStore';
 import { useProductsStore } from './store/useProductsStore';
 
-import { useFavoritesStore } from './store/useFavoritesStore';
-import { usePromoStore } from './store/usePromoStore';
+const Cart = lazy(() => import('./pages/Cart'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Admin = lazy(() => import('./pages/Admin'));
+const Favorites = lazy(() => import('./pages/Favorites'));
 
-function App() {
-  const { t } = useTranslation();
-  const cartItemsCount = useCartStore(state => state.items.reduce((total, item) => total + item.quantity, 0));
-  const subscribeToProducts = useProductsStore(state => state.subscribeToProducts);
-  const subscribeToPromos = usePromoStore(state => state.subscribeToPromos);
+const links = [
+  { to: '/', label: 'Каталог', Icon: LayoutGrid },
+  { to: '/favorites', label: 'Обране', Icon: Heart },
+  { to: '/cart', label: 'Кошик', Icon: ShoppingBag },
+  { to: '/profile', label: 'Профіль', Icon: UserRound },
+];
+
+export default function App() {
+  const count = useCartStore(state => state.items.reduce((total, item) => total + item.quantity, 0));
+  const watchProducts = useProductsStore(state => state.watchProducts);
   const loadFavorites = useFavoritesStore(state => state.loadFavorites);
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   useEffect(() => {
-    WebApp.ready();
-    WebApp.expand();
-    document.documentElement.setAttribute('data-theme', 'dark');
-    
-    if (WebApp.initDataUnsafe?.user?.id) {
-      loadFavorites(WebApp.initDataUnsafe.user.id);
+    const app = telegram();
+    app?.ready();
+    app?.expand();
+    if (app?.isVersionAtLeast('6.1')) {
+      app.setHeaderColor('#101611');
+      app.setBackgroundColor('#101611');
     }
-
-    // Подписываемся на обновления БД глобально при запуске
-    const unsubscribeProducts = subscribeToProducts();
-    const unsubscribePromos = subscribeToPromos();
-
-    return () => {
-      unsubscribeProducts();
-      unsubscribePromos();
-    };
-  }, [subscribeToProducts, subscribeToPromos, loadFavorites]);
-
-  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
-
-  useEffect(() => {
-    const handleResize = () => {
-      if (window.visualViewport) {
-        const isKb = window.visualViewport.height < window.innerHeight * 0.75;
-        setIsKeyboardOpen(isKb);
+    if (app?.isVersionAtLeast('7.10')) app.setBottomBarColor?.('#101611');
+    const applyInsets = () => {
+      const root = document.documentElement;
+      for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+        const inset = Math.max(0, (app?.safeAreaInset?.[side] ?? 0) + (app?.contentSafeAreaInset?.[side] ?? 0));
+        root.style.setProperty('--tg-inset-' + side, inset + 'px');
       }
     };
+    applyInsets();
+    app?.onEvent('safeAreaChanged', applyInsets);
+    app?.onEvent('contentSafeAreaChanged', applyInsets);
+    void loadFavorites();
+    const stop = watchProducts();
+    return () => {
+      app?.offEvent('safeAreaChanged', applyInsets);
+      app?.offEvent('contentSafeAreaChanged', applyInsets);
+      stop();
+    };
+  }, [watchProducts, loadFavorites]);
 
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', handleResize);
-      return () => window.visualViewport?.removeEventListener('resize', handleResize);
-    }
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const resize = () => setKeyboardOpen(Boolean(viewport && viewport.height < window.innerHeight * 0.76 && viewport.scale <= 1.05));
+    resize();
+    viewport?.addEventListener('resize', resize);
+    return () => viewport?.removeEventListener('resize', resize);
   }, []);
 
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+
+  useEffect(() => {
+    const app = telegram();
+    if (!app?.initData || !app.BackButton) return;
+    const button = app.BackButton;
+    const params = new URLSearchParams(search);
+    const product = params.has('productId');
+    if (pathname === '/' && !product) {
+      button.hide();
+      return;
+    }
+    const goBack = () => {
+      if (product) {
+        params.delete('productId');
+        navigate({ pathname, search: params.toString() }, { replace: true });
+      } else {
+        navigate(pathname === '/admin' ? '/profile' : '/');
+      }
+    };
+    button.show();
+    button.onClick(goBack);
+    return () => { button.offClick(goBack); button.hide(); };
+  }, [pathname, search, navigate]);
+
   return (
-    <div className={styles.appContainer}>
-      <header className={styles.header}>
-        <div className={styles.logoContainer}>
-          <img src="/logo.png" alt="Animeria Shop Logo" className={styles.logo} />
-          <h1 className={styles.title}>Animeria Shop</h1>
+    <>
+      <a className="skip-link" href="#main-content">До вмісту</a>
+      <header className="shop-header">
+        <div className="shell header-inner">
+          <Link className="brand" to="/" aria-label="Animeria — до каталогу">
+            <img src="/mark.svg" alt="" width="46" height="46" />
+            <span><strong>Animeria</strong><small>МАЙСТЕРНЯ 3D-ДРУКУ</small></span>
+          </Link>
+          <Link className="header-bag icon-button" to="/cart" aria-label={count ? 'Кошик, позицій: ' + count : 'Кошик'}>
+            <ShoppingBag size={21} strokeWidth={1.65} />
+            {count > 0 && <span className="nav-count">{count > 99 ? '99+' : count}</span>}
+          </Link>
         </div>
       </header>
-      
-      <main className={styles.main}>
-        <Routes>
-          <Route path="/" element={<Catalog />} />
-          <Route path="/cart" element={<Cart />} />
-          <Route path="/favorites" element={<Favorites />} />
-          <Route path="/profile" element={<Profile />} />
-          <Route path="/admin" element={<Admin />} />
-        </Routes>
+      <main className="shell shop-main" id="main-content">
+        <Suspense fallback={<div className="empty-state" role="status">Завантажуємо…</div>}>
+          <Routes>
+            <Route path="/" element={<Catalog />} />
+            <Route path="/cart" element={<Cart />} />
+            <Route path="/favorites" element={<Favorites />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/admin" element={<Admin />} />
+            <Route path="*" element={<div className="empty-state"><h1>Сторінку не знайдено</h1><Link to="/" className="button primary">До каталогу</Link></div>} />
+          </Routes>
+        </Suspense>
       </main>
-
-      <footer className={styles.bottomNav} style={isKeyboardOpen ? {display: 'none'} : undefined}>
-        <NavLink 
-          to="/" 
-          className={({ isActive }) => `${styles.navItem} ${isActive ? styles.activeNav : ''}`}
-        >
-          <LayoutGrid size={24} />
-          <span>{t('Catalog')}</span>
-        </NavLink>
-        <NavLink 
-          to="/cart" 
-          className={({ isActive }) => `${styles.navItem} ${isActive ? styles.activeNav : ''}`}
-        >
-          <div style={{position: 'relative'}}>
-            <ShoppingCart size={24} />
-            {cartItemsCount > 0 && <span className={styles.cartBadge}>{cartItemsCount}</span>}
-          </div>
-          <span>{t('Cart')}</span>
-        </NavLink>
-        <NavLink to="/favorites" className={({isActive}) => isActive ? `${styles.navItem} ${styles.activeNav}` : styles.navItem}>
-          <Heart size={24} />
-          <span>{t('Favorites_Title')}</span>
-        </NavLink>
-        <NavLink to="/profile" className={({isActive}) => isActive ? `${styles.navItem} ${styles.activeNav}` : styles.navItem}>
-          <User size={24} />
-          <span>{t('Profile')}</span>
-        </NavLink>
-      </footer>
-    </div>
+      {!keyboardOpen && <nav className="glass-nav" aria-label="Розділи магазину">
+        {links.map(({ to, label, Icon }) => (
+          <NavLink end={to === '/'} key={to} to={to} className="glass-tab">
+            <span className="nav-icon"><Icon size={21} strokeWidth={1.65} />{to === '/cart' && count > 0 && <span className="nav-count">{count > 99 ? '99+' : count}</span>}</span>
+            <span>{label}</span>
+          </NavLink>
+        ))}
+      </nav>}
+    </>
   );
 }
-
-export default App;

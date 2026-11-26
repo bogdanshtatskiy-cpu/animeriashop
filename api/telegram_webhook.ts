@@ -1,97 +1,63 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, query, where, getDocs } from "firebase/firestore";
-import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
+import { randomUUID } from 'node:crypto';
+import { database } from '../server/firebase.js';
+import { HttpError, post } from '../server/http.js';
+import { equalSecret, sendMessage } from '../server/telegram.js';
 
-const firebaseConfig = {
-  apiKey: process.env.VITE_FIREBASE_API_KEY,
-  authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.VITE_FIREBASE_APP_ID
-};
+export default post(async (request, response, body) => {
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
+  const supplied = request.headers['x-telegram-bot-api-secret-token'];
+  if (!secret) throw new HttpError(503, 'WEBHOOK_CONFIG', 'Webhook configuration missing.');
+  if (typeof supplied !== 'string' || !equalSecret(secret, supplied)) throw new HttpError(401, 'WEBHOOK_AUTH', 'Unauthorized.');
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
+  const message = body.message as {
+    text?: string;
+    from?: { id?: number; is_bot?: boolean };
+    chat?: { id?: number; type?: string };
+  } | undefined;
+  const userId = message?.from?.id;
+  const text = message?.text?.match(/^\/review(?:@\w+)?[ \t\n]+([\s\S]+)$/i)?.[1].trim();
+  if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0 || message?.from?.is_bot
+    || message?.chat?.type !== 'private' || message.chat.id !== userId || !text || text.length > 1400
+    || !Number.isSafeInteger(body.update_id) || (body.update_id as number) < 0) return response.json({ ok: true });
 
-export default async function handler(req: any, res: any) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-
-  const { message } = req.body;
-  if (!message || !message.text || !message.from) return res.status(200).json({ success: true });
-
-  const telegramId = message.from.id;
-  const text = message.text;
-  const username = message.from.username;
-
-  // Sign in as admin to bypass rules for reading orders and writing reviews
-  const adminEmail = process.env.FIREBASE_ADMIN_EMAIL;
-  const adminPassword = process.env.FIREBASE_ADMIN_PASSWORD;
-
-  try {
-    if (adminEmail && adminPassword) {
-      await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
-    }
-    
-    // Check how many completed orders the user has
-    const qOrders = query(collection(db, 'orders'), where('userId', '==', telegramId), where('status', '==', 'completed'));
-    const snapshotOrders = await getDocs(qOrders);
-    const completedOrdersCount = snapshotOrders.size;
-    
-    if (completedOrdersCount === 0) {
-      return res.status(200).json({ success: true }); // Ignore messages from users without completed orders
+  const db = database();
+  const channel = process.env.REVIEWS_CHANNEL_ID?.trim();
+  const review = db.collection('reviews').doc('tg-' + body.update_id);
+  const reviewUser = db.collection('review_locks').doc(String(userId));
+  const lease = randomUUID();
+  const now = Date.now();
+  const state = await db.runTransaction(async (tx) => {
+    const [existing, lock] = await tx.getAll(review, reviewUser);
+    if (existing.exists) {
+      if (existing.get('publication') === 'published' || !channel) return 'finished';
+      if (existing.get('leaseUntil') > now) return 'busy';
+      tx.update(review, { lease, leaseUntil: now + 15_000 });
+      return 'publish';
     }
 
-    // Check how many reviews the user has already left
-    const qReviews = query(collection(db, 'reviews'), where('userId', '==', telegramId));
-    const snapshotReviews = await getDocs(qReviews);
-    const reviewsCount = snapshotReviews.size;
-
-    // Only allow leaving a review if they have more completed orders than existing reviews
-    if (reviewsCount >= completedOrdersCount) {
-      // User has already reviewed all their completed orders, ignore further messages
-      return res.status(200).json({ success: true });
-    }
-
-    // Save review to firestore
-    await addDoc(collection(db, 'reviews'), {
-      userId: telegramId,
-      username: username || '',
-      firstName: message.from.first_name || '',
-      text: text,
-      createdAt: Date.now(),
-      orderCountAtReview: completedOrdersCount
+    const orders = await tx.get(db.collection('orders').where('userId', '==', userId).where('status', '==', 'completed'));
+    const previousCount = lock.exists ? Number(lock.get('count')) : (
+      await tx.get(db.collection('reviews').where('userId', '==', userId))
+    ).size;
+    if (orders.size <= previousCount) return 'finished';
+    tx.set(reviewUser, { count: previousCount + 1 });
+    tx.create(review, {
+      userId, text, createdAt: now, orderCountAtReview: orders.size, publication: 'pending',
+      ...(channel ? { lease, leaseUntil: now + 15_000 } : {}),
     });
+    return channel ? 'publish' : 'saved';
+  });
 
-    // Forward to reviews channel
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const channelId = process.env.REVIEWS_CHANNEL_ID;
-
-    if (token && channelId) {
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: channelId,
-          text: `📝 Новий відгук!\nВід: ${message.from.first_name}\n\n"${text}"`
-        })
-      });
-      
-      // Reply to user
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: telegramId,
-          text: `Дякуємо! Ваш відгук успішно збережено та опубліковано ❤️`
-        })
-      });
-    }
-
-    return res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Webhook error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+  if (state === 'busy') return response.status(503).json({ ok: false });
+  if (state === 'publish' && channel) {
+    const error = await sendMessage(channel, 'Відгук про Animeria\n\n' + text);
+    await db.runTransaction(async (tx) => {
+      const snapshot = await tx.get(review);
+      if (snapshot.get('lease') === lease) tx.update(review, { publication: error ? 'pending' : 'published', leaseUntil: 0 });
+    });
+    if (error) return response.status(502).json({ ok: false });
+    await sendMessage(userId, 'Дякуємо за відгук. Ми опублікували його анонімно.');
   }
-}
+  if (state === 'saved') await sendMessage(userId, 'Дякуємо. Ваш відгук збережено.');
+  return response.json({ ok: true });
+});

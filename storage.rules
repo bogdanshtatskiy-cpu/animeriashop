@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /products/{file} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.uid == 'Jg9Sg5GygkSe2Tfx04I3LrF26le2'
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp|avif)');
+      allow delete: if request.auth != null && request.auth.uid == 'Jg9Sg5GygkSe2Tfx04I3LrF26le2';
+    }
+  }
+}

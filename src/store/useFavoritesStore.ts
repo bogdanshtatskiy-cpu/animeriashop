@@ -1,51 +1,65 @@
 import { create } from 'zustand';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { api } from '../lib/api';
+import { inTelegram, telegramUser } from '../lib/telegram';
+
+function storageKey() {
+  return 'animeria-favorites-' + (telegramUser()?.id ?? 'guest');
+}
+
+function readCache(): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKey()) ?? '[]');
+    return Array.isArray(value) ? value.filter(id => typeof id === 'string') : [];
+  } catch { return []; }
+}
+
+function writeCache(items: string[]) {
+  try { localStorage.setItem(storageKey(), JSON.stringify(items)); } catch { /* storage unavailable */ }
+}
 
 interface FavoritesState {
   favorites: string[];
+  pending: string[];
   loading: boolean;
-  loadFavorites: (userId: number) => Promise<void>;
-  toggleFavorite: (userId: number, productId: string) => Promise<void>;
+  error: string;
+  loadFavorites: () => Promise<void>;
+  toggleFavorite: (productId: string) => Promise<void>;
 }
 
-export const useFavoritesStore = create<FavoritesState>((set, get) => ({
-  favorites: [],
-  loading: false,
+const setFavorite = (items: string[], id: string, enabled: boolean) =>
+  enabled ? [...new Set([...items, id])] : items.filter(item => item !== id);
 
-  loadFavorites: async (userId) => {
-    set({ loading: true });
+export const useFavoritesStore = create<FavoritesState>((set, get) => ({
+  favorites: readCache(), pending: [], loading: false, error: '',
+  loadFavorites: async () => {
+    if (!inTelegram() || get().loading) return;
+    set({ loading: true, error: '' });
     try {
-      const docRef = doc(db, 'favorites', userId.toString());
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        set({ favorites: docSnap.data().items || [] });
-      } else {
-        set({ favorites: [] });
-      }
-    } catch (error) {
-      console.error('Error loading favorites:', error);
+      const { items } = await api<{ items: string[] }>('favorites', { action: 'read' });
+      set({ favorites: items });
+      writeCache(items);
+    } catch {
+      set({ error: 'Не вдалося синхронізувати обране.' });
+    } finally { set({ loading: false }); }
+  },
+  toggleFavorite: async id => {
+    const { favorites, pending, loading } = get();
+    if (loading || pending.includes(id)) return;
+    const previous = favorites.includes(id);
+    const next = setFavorite(favorites, id, !previous);
+    if (!inTelegram()) {
+      set({ favorites: next });
+      writeCache(next);
+      return;
+    }
+    set({ favorites: next, pending: [...pending, id], error: '' });
+    try {
+      await api('favorites', { action: 'set', id, selected: !previous });
+    } catch {
+      set(state => ({ favorites: setFavorite(state.favorites, id, previous), error: 'Не вдалося зберегти зміни в обраному.' }));
     } finally {
-      set({ loading: false });
+      set(state => ({ pending: state.pending.filter(item => item !== id) }));
+      writeCache(get().favorites);
     }
   },
-
-  toggleFavorite: async (userId, productId) => {
-    const { favorites } = get();
-    const isFav = favorites.includes(productId);
-    const newFavorites = isFav 
-      ? favorites.filter(id => id !== productId)
-      : [...favorites, productId];
-    
-    set({ favorites: newFavorites }); // Optimistic update
-
-    try {
-      const docRef = doc(db, 'favorites', userId.toString());
-      await setDoc(docRef, { items: newFavorites }, { merge: true });
-    } catch (error) {
-      console.error('Error toggling favorite:', error);
-      // Revert on error
-      set({ favorites });
-    }
-  }
 }));

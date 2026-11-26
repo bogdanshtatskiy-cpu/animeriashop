@@ -1,7 +1,15 @@
 import { create } from 'zustand';
-import { collection, addDoc, doc, updateDoc, onSnapshot, orderBy, query, where, getDocs, limit, startAfter } from 'firebase/firestore';
+import { collection, getDocs, limit, onSnapshot, orderBy, query, startAfter, where } from 'firebase/firestore';
+import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import { CartItem } from './useCartStore';
+import type { OrderStatus } from '../lib/commerce';
+import type { CartItem } from './useCartStore';
+
+export interface Notice {
+  state: 'pending' | 'sending' | 'sent' | 'failed';
+  leaseUntil?: number;
+  error?: { error_code?: number; description: string };
+}
 
 export interface Order {
   id: string;
@@ -11,152 +19,61 @@ export interface Order {
   lastName?: string;
   items: CartItem[];
   totalPrice: number;
-  shippingDetails?: {
-    phone: string;
-    city: string;
-    branch: string;
-  };
-  status: 'new' | 'processing' | 'shipped' | 'completed' | 'cancelled';
+  shippingDetails?: { phone: string; city: string; branch: string };
+  status: OrderStatus;
   ttn?: string;
   createdAt: number;
+  promoCode?: string;
+  adminNotice?: Notice;
+  customerNotice?: Notice;
 }
 
+type Stats = { income: number; count: number };
 interface OrdersState {
   orders: Order[];
   archivedOrders: Order[];
   loading: boolean;
   archivedLoading: boolean;
   hasMoreArchived: boolean;
-  lastArchivedDoc: any;
-  indexError: string | null;
-  
+  lastArchivedDoc: QueryDocumentSnapshot<DocumentData> | null;
+  error: string;
   subscribeToActiveOrders: () => () => void;
   loadArchivedOrders: (reset?: boolean) => Promise<void>;
-  createOrder: (orderData: Omit<Order, 'id' | 'createdAt' | 'status'>) => Promise<boolean>;
-  updateOrderStatus: (id: string, status: Order['status'], ttn?: string) => Promise<void>;
-  getStats: (days: number) => Promise<{income: number, count: number}>;
+  getStats: (days: number) => Promise<Stats>;
 }
 
+const orderDoc = (entry: QueryDocumentSnapshot<DocumentData>) => ({ ...entry.data(), id: entry.id } as Order);
+const queryError = (error: unknown) => error instanceof Error && /requires an index/i.test(error.message)
+  ? 'Індекс Firestore ще не готовий. Перевірте розділ Firestore → Indexes.'
+  : 'Не вдалося завантажити замовлення. Спробуйте оновити сторінку.';
+
 export const useOrdersStore = create<OrdersState>((set, get) => ({
-  orders: [],
-  archivedOrders: [],
-  loading: true,
-  archivedLoading: false,
-  hasMoreArchived: true,
-  lastArchivedDoc: null,
-  indexError: null,
-  
+  orders: [], archivedOrders: [], loading: true, archivedLoading: false, hasMoreArchived: false, lastArchivedDoc: null, error: '',
   subscribeToActiveOrders: () => {
-    set({ loading: true });
-    const q = query(
-      collection(db, 'orders'), 
-      where('status', 'in', ['new', 'processing', 'shipped']),
-      orderBy('createdAt', 'desc')
+    set({ loading: true, orders: [], archivedOrders: [], lastArchivedDoc: null, hasMoreArchived: false, error: '' });
+    return onSnapshot(
+      query(collection(db, 'orders'), where('status', 'in', ['new', 'processing', 'shipped']), orderBy('createdAt', 'desc')),
+      snapshot => set({ orders: snapshot.docs.map(orderDoc), loading: false }),
+      error => set({ error: queryError(error), loading: false }),
     );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const ordersData: Order[] = [];
-      snapshot.forEach((doc) => {
-        ordersData.push({ id: doc.id, ...doc.data() } as Order);
-      });
-      set({ orders: ordersData, loading: false, indexError: null });
-    }, (error: any) => {
-      console.error('Error in onSnapshot (orders):', error);
-      const msg = error?.message || '';
-      set({ loading: false, indexError: msg.includes('requires an index') ? msg : null });
-    });
-    return unsubscribe;
   },
-
   loadArchivedOrders: async (reset = false) => {
-    const { archivedLoading, hasMoreArchived, lastArchivedDoc, archivedOrders } = get();
-    if (archivedLoading || (!hasMoreArchived && !reset)) return;
-
-    set({ archivedLoading: true });
+    const { archivedLoading, lastArchivedDoc, archivedOrders } = get();
+    if (archivedLoading) return;
+    set({ archivedLoading: true, error: '' });
     try {
-      let q = query(
-        collection(db, 'orders'),
-        where('status', 'in', ['completed', 'cancelled']),
-        orderBy('createdAt', 'desc'),
-        limit(20)
-      );
-
-      if (!reset && lastArchivedDoc) {
-        q = query(q, startAfter(lastArchivedDoc));
-      }
-
-      const snapshot = await getDocs(q);
-      const newOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
-      
+      const base = query(collection(db, 'orders'), where('status', 'in', ['completed', 'cancelled']), orderBy('createdAt', 'desc'), limit(20));
+      const snapshot = await getDocs(!reset && lastArchivedDoc ? query(base, startAfter(lastArchivedDoc)) : base);
+      const combined = [...(reset ? [] : archivedOrders), ...snapshot.docs.map(orderDoc)];
       set({
-        archivedOrders: reset ? newOrders : [...archivedOrders, ...newOrders],
-        lastArchivedDoc: snapshot.docs[snapshot.docs.length - 1] || null,
-        hasMoreArchived: snapshot.docs.length === 20,
-        archivedLoading: false
+        archivedOrders: [...new Map(combined.map(order => [order.id, order])).values()],
+        lastArchivedDoc: snapshot.docs.at(-1) ?? null, hasMoreArchived: snapshot.size === 20, archivedLoading: false,
       });
-    } catch (error: any) {
-      console.error('Error fetching archived orders:', error);
-      const msg = error?.message || '';
-      if (msg.includes('requires an index')) {
-        set({ indexError: msg });
-      }
-      set({ archivedLoading: false });
-    }
+    } catch (error) { set({ error: queryError(error), archivedLoading: false }); }
   },
-
-  getStats: async (days: number) => {
-    const timeAgo = Date.now() - (days * 24 * 60 * 60 * 1000);
-    try {
-      const q = query(
-        collection(db, 'orders'),
-        where('status', '==', 'completed'),
-        where('createdAt', '>=', timeAgo)
-      );
-      const snapshot = await getDocs(q);
-      
-      return snapshot.docs.reduce((sum, doc) => {
-        return {
-          income: sum.income + (doc.data().totalPrice || 0),
-          count: sum.count + 1
-        };
-      }, { income: 0, count: 0 });
-    } catch (error: any) {
-      console.error('Error fetching stats:', error);
-      const msg = error?.message || '';
-      if (msg.includes('requires an index')) {
-        set({ indexError: msg });
-      }
-      return { income: 0, count: 0 };
-    }
+  getStats: async days => {
+    const threshold = Date.now() - days * 86_400_000;
+    const snapshot = await getDocs(query(collection(db, 'orders'), where('status', '==', 'completed'), where('createdAt', '>=', threshold)));
+    return { income: snapshot.docs.reduce((income, entry) => income + Number(entry.get('totalPrice') || 0), 0), count: snapshot.size };
   },
-
-  createOrder: async (orderData) => {
-    try {
-      const newOrder = {
-        ...orderData,
-        status: 'new',
-        createdAt: Date.now()
-      };
-      await addDoc(collection(db, 'orders'), newOrder);
-      return true;
-    } catch (error) {
-      console.error('Error creating order:', error);
-      return false;
-    }
-  },
-
-  updateOrderStatus: async (id, status, ttn) => {
-    try {
-      const orderRef = doc(db, 'orders', id);
-      const updateData: any = { status };
-      if (ttn !== undefined) {
-        updateData.ttn = ttn;
-      }
-      await updateDoc(orderRef, updateData);
-      
-      // If status changed to archive, maybe reload archive if we were on it
-      // but for now let's just let it be.
-    } catch (error) {
-      console.error('Error updating order status:', error);
-    }
-  }
 }));

@@ -1,274 +1,111 @@
-import { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import WebApp from '@twa-dev/sdk';
-import styles from '../App.module.css';
+import { ArrowDown, ArrowDownUp, Box, PackageCheck, Paintbrush, Search, X } from 'lucide-react';
+import { isWand, ProductCard, ProductDetail, WAND_CATEGORY } from '../components/Product';
+import { unitPrice } from '../lib/commerce';
+import { haptic, telegram } from '../lib/telegram';
 import { useCartStore } from '../store/useCartStore';
-import { useProductsStore } from '../store/useProductsStore';
 import { useFavoritesStore } from '../store/useFavoritesStore';
-import { Product } from '../store/useCartStore';
+import { useProductsStore } from '../store/useProductsStore';
+
+const normalize = (text: string) => text.toLocaleLowerCase('uk').replace(/[iі]/g, 'і').replace(/[’']/g, '');
+const workshop = [
+  { Icon: Box, title: 'Дві технології друку', detail: 'FDM і фотополімерний друк' },
+  { Icon: Paintbrush, title: 'Ручне фарбування', detail: 'Оздоблення кожної палички вручну' },
+  { Icon: PackageCheck, title: 'Нова пошта', detail: 'Доставка по Україні' },
+];
 
 export default function Catalog() {
-  const { t } = useTranslation();
-  const addItem = useCartStore((state) => state.addItem);
-  const { products, loading } = useProductsStore();
-  const { favorites, toggleFavorite } = useFavoritesStore();
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [selectedColor, setSelectedColor] = useState<string>('');
-  
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
-
-  // Получаем уникальные категории из товаров
-  const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean))) as string[];
-
-  // Фильтруем товары
-  const filteredProducts = products.filter(p => {
-    const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = activeCategory ? p.category === activeCategory : true;
-    return matchesSearch && matchesCategory;
+  const { products, loading, error } = useProductsStore();
+  const favoriteError = useFavoritesStore(state => state.error);
+  const addItem = useCartStore(state => state.addItem);
+  const [params, setParams] = useSearchParams();
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('');
+  const [sort, setSort] = useState('featured');
+  const catalog = useRef<HTMLElement>(null);
+  const lastLaunch = useRef('');
+  const productId = params.get('productId');
+  const publicProducts = products.filter(product => product.available !== false);
+  const categories = [...new Set(publicProducts.flatMap(product => isWand(product) ? [] : product.category ? [product.category] : []))].sort((a, b) => a.localeCompare(b, 'uk'));
+  const selected = publicProducts.find(product => product.id === productId);
+  const visible = publicProducts.filter(product => {
+    const matchesCategory = !category || (category === WAND_CATEGORY ? isWand(product) : !isWand(product) && category === product.category);
+    const searchable = [product.title, product.description, product.character, product.category, isWand(product) ? WAND_CATEGORY + ' Гаррі Поттер' : ''].filter(Boolean).join(' ');
+    return matchesCategory && normalize(query.trim()).split(/\s+/).every(term => normalize(searchable).includes(term));
+  }).sort((a, b) => {
+    if (sort === 'price-up') return unitPrice(a) - unitPrice(b);
+    if (sort === 'price-down') return unitPrice(b) - unitPrice(a);
+    return Number(Boolean(b.featured)) - Number(Boolean(a.featured)) || Number(isWand(b)) - Number(isWand(a));
   });
 
   useEffect(() => {
-    const productId = searchParams.get('productId');
-    if (productId && products.length > 0) {
-      const product = products.find(p => p.id === productId);
-      if (product) {
-        openModal(product);
-        // Убираем параметр из URL чтобы при закрытии модалки он не оставался
-        searchParams.delete('productId');
-        setSearchParams(searchParams, { replace: true });
-      }
+    const start = telegram()?.initDataUnsafe?.start_param;
+    if (!productId && start && /^p_[\w-]{1,128}$/.test(start) && lastLaunch.current !== start) {
+      lastLaunch.current = start;
+      try {
+        if (sessionStorage.getItem('animeria-launch-' + start)) return;
+        sessionStorage.setItem('animeria-launch-' + start, '1');
+      } catch { /* storage unavailable */ }
+      setParams(previous => { const next = new URLSearchParams(previous); next.set('productId', start.slice(2)); return next; }, { replace: true });
     }
-  }, [searchParams, products, setSearchParams]);
+  }, [productId, setParams]);
 
-  useEffect(() => {
-    if (selectedProduct) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'auto';
-    }
-    return () => {
-      document.body.style.overflow = 'auto';
-    };
-  }, [selectedProduct]);
+  function closeProduct() {
+    setParams(previous => { const next = new URLSearchParams(previous); next.delete('productId'); return next; }, { replace: true });
+  }
 
-  const openModal = (product: Product) => {
-    setSelectedProduct(product);
-    if (product.colors && product.colors.length > 0) {
-      setSelectedColor(product.colors[0]);
-    } else {
-      setSelectedColor('');
-    }
-  };
-
-  const closeModal = () => {
-    setSelectedProduct(null);
-    setSelectedColor('');
-  };
-
-  const handleAddToCart = (e: React.MouseEvent, product: Product) => {
-    e.stopPropagation(); // prevent modal opening if clicking directly on add to cart button in list
-    // If clicking from list directly and it has colors, maybe default to first or force open modal.
-    // Let's force open modal if it has colors, otherwise add.
-    if (product.colors && product.colors.length > 0) {
-      openModal(product);
-    } else {
-      addItem(product);
-      // Optional: show small toast or animation
-    }
-  };
-
-  const handleModalAddToCart = () => {
-    if (selectedProduct) {
-      addItem(selectedProduct, selectedColor);
-      closeModal();
-    }
-  };
-
-  return (
-    <div>
-      <div className={styles.welcome}>
-        <h2>{t('Welcome')}</h2>
-        <p>{t('Catalog_desc')}</p>
+  return <>
+    <section className="hero" aria-labelledby="hero-title">
+      <picture><img src="/media/atelier.webp" alt="" fetchPriority="high" width="1440" height="960" /></picture>
+      <div className="hero-content">
+        <p className="eyebrow hero-eyebrow"><span />Колекція майстерні</p>
+        <h1 id="hero-title">Чарівні<br /><em>палички</em></h1>
+        <p className="hero-description">За мотивами світу Гаррі Поттера. Друкуємо в 3D і фарбуємо вручну.</p>
+        <button type="button" className="button primary hero-cta" onClick={() => { setQuery(''); setCategory(WAND_CATEGORY); catalog.current?.scrollIntoView({ block: 'start' }); }}>
+          До колекції <ArrowDown size={17} strokeWidth={1.8} />
+        </button>
       </div>
-
-      <div className={styles.searchContainer}>
-        <input 
-          type="text" 
-          placeholder={t('Search_Placeholder', 'Пошук товарів...')} 
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className={styles.searchInput}
-        />
-        
-        {categories.length > 0 && (
-          <div className={styles.categoriesScroll}>
-            <button 
-              className={`${styles.categoryPill} ${activeCategory === null ? styles.categoryPillActive : ''}`}
-              onClick={() => setActiveCategory(null)}
-            >
-              {t('All_Categories', 'Всі товари')}
-            </button>
-            {categories.map(cat => (
-              <button 
-                key={cat}
-                className={`${styles.categoryPill} ${activeCategory === cat ? styles.categoryPillActive : ''}`}
-                onClick={() => setActiveCategory(cat)}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className={styles.productsGrid}>
-        {loading ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className={styles.skeletonCard}>
-              <div className={styles.skeletonImage}></div>
-              <div className={styles.skeletonText}></div>
-              <div className={styles.skeletonTextShort}></div>
-              <div className={styles.skeletonButton}></div>
-            </div>
-          ))
-        ) : filteredProducts.map((item) => (
-          <div key={item.id} className={styles.productCard} style={{position: 'relative'}} onClick={() => openModal(item)}>
-            <button 
-              className={styles.favoriteBtn}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (WebApp.initDataUnsafe?.user?.id) {
-                  toggleFavorite(WebApp.initDataUnsafe.user.id, item.id);
-                }
-              }}
-            >
-              {favorites.includes(item.id) ? '❤️' : '🤍'}
-            </button>
-            {(item.imageUrls?.[0] || item.imageUrl) ? (
-              <div style={{position: 'relative', width: '100%', aspectRatio: '1', overflow: 'hidden', borderRadius: '8px'}}>
-                <img src={item.imageUrls?.[0] || item.imageUrl} alt={item.title} className={styles.productImage} loading="lazy" />
-              </div>
-            ) : (
-              <div className={styles.productImagePlaceholder}></div>
-            )}
-            <h3>{item.title}</h3>
-            {item.discount ? (
-                <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
-                  <p className={styles.price} style={{color: 'var(--danger-color)'}}>
-                    ₴ {item.discount.type === 'percent' ? Math.round(item.price * (1 - item.discount.value / 100)) : item.price - item.discount.value}
-                  </p>
-                  <p style={{textDecoration: 'line-through', color: 'var(--text-secondary)', fontSize: '14px', margin: 0}}>
-                    ₴ {item.price}
-                  </p>
-                </div>
-              ) : (
-                <p className={styles.price}>₴ {item.price}</p>
-              )}
-            {item.category && <span className={styles.categoryBadge}>{item.category}</span>}
-            <button className={styles.addToCart} onClick={(e) => handleAddToCart(e, item)}>
-              {t('Add_to_cart')}
-            </button>
-          </div>
-        ))}
-        {!loading && filteredProducts.length === 0 && (
-          <p style={{textAlign: 'center', gridColumn: '1 / -1', color: 'var(--text-secondary)'}}>
-            {t('Nothing_Found', 'Ничего не найдено')}
-          </p>
-        )}
-      </div>
-
-      {selectedProduct && (
-        <div className={styles.modalOverlay} onClick={closeModal}>
-          <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <button className={styles.modalClose} onClick={closeModal}>&times;</button>
-            
-            <div className={styles.modalImageContainer}>
-              {selectedProduct.imageUrls && selectedProduct.imageUrls.length > 1 ? (
-                <div className={styles.modalGalleryScroll}>
-                  {selectedProduct.imageUrls.map((url, idx) => (
-                    <img key={idx} src={url} alt={`${selectedProduct.title} ${idx + 1}`} className={styles.modalImage} loading="lazy" />
-                  ))}
-                </div>
-              ) : selectedProduct.imageUrls?.[0] || selectedProduct.imageUrl ? (
-                <img src={selectedProduct.imageUrls?.[0] || selectedProduct.imageUrl} alt={selectedProduct.title} className={styles.modalImage} loading="lazy" />
-              ) : (
-                <div className={styles.productImagePlaceholder}></div>
-              )}
-            </div>
-            
-            <div className={styles.modalScrollableInfo}>
-              <div className={styles.modalHeaderInfo}>
-                <h2 className={styles.modalTitle}>{selectedProduct.title}</h2>
-                <div className={styles.modalPriceContainer}>
-                  {selectedProduct.discount ? (
-                    <>
-                      <p className={styles.priceLargeDiscounted}>
-                        ₴ {selectedProduct.discount.type === 'percent' ? Math.round(selectedProduct.price * (1 - selectedProduct.discount.value / 100)) : selectedProduct.price - selectedProduct.discount.value}
-                      </p>
-                      <p className={styles.priceOld}>₴ {selectedProduct.price}</p>
-                      <span className={styles.discountBadge}>
-                        -{selectedProduct.discount.type === 'percent' ? `${selectedProduct.discount.value}%` : `₴${selectedProduct.discount.value}`}
-                      </span>
-                    </>
-                  ) : (
-                    <p className={styles.priceLarge}>₴ {selectedProduct.price}</p>
-                  )}
-                </div>
-              </div>
-              
-              {selectedProduct.description && (
-                <div className={styles.modalSection}>
-                  <p className={styles.modalDescription}>{selectedProduct.description}</p>
-                </div>
-              )}
-              
-              {(selectedProduct.material || selectedProduct.dimensions) && (
-                <div className={styles.modalSection}>
-                  <div className={styles.modalSpecsGrid}>
-                    {selectedProduct.material && (
-                      <div className={styles.specItem}>
-                        <span className={styles.specLabel}>{t('Material_Label', 'Материал:')}</span>
-                        <span className={styles.specValue}>{selectedProduct.material}</span>
-                      </div>
-                    )}
-                    {selectedProduct.dimensions && (
-                      <div className={styles.specItem}>
-                        <span className={styles.specLabel}>{t('Dimensions_Label', 'Размеры:')}</span>
-                        <span className={styles.specValue}>{selectedProduct.dimensions}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {selectedProduct.colors && selectedProduct.colors.length > 0 && (
-                <div className={styles.modalSection}>
-                  <p className={styles.sectionTitle}>{t('Color_Label', 'Цвет:')}</p>
-                  <div className={styles.colorOptions}>
-                    {selectedProduct.colors.map(color => (
-                      <button 
-                        key={color} 
-                        className={`${styles.colorBtn} ${selectedColor === color ? styles.colorBtnActive : ''}`}
-                        onClick={() => setSelectedColor(color)}
-                      >
-                        {color}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <button className={styles.modalAddToCart} onClick={handleModalAddToCart}>
-                {t('Add_to_cart')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+    </section>
+    <div className="workshop-strip">
+      {workshop.map(({ Icon, title, detail }) => <div className="workshop-item" key={title}>
+        <Icon size={21} strokeWidth={1.45} /><span><strong>{title}</strong><small>{detail}</small></span>
+      </div>)}
     </div>
-  );
+    <section className="catalog-section" ref={catalog} aria-labelledby="catalog-title">
+      <div className="section-heading"><h2 id="catalog-title">Каталог майстерні</h2>
+        {!loading && !error && <span className="result-count" aria-live="polite">{visible.length} поз.</span>}
+      </div>
+      <div className="catalog-controls">
+        <div className="search-box">
+          <Search size={20} strokeWidth={1.6} />
+          <label className="sr-only" htmlFor="catalog-search">Пошук у каталозі</label>
+          <input id="catalog-search" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Пошук у каталозі" />
+          {query && <button className="icon-button search-clear" type="button" aria-label="Очистити пошук" onClick={() => setQuery('')}><X size={16} /></button>}
+        </div>
+        <label className="sort-control"><ArrowDownUp size={17} strokeWidth={1.6} /><span className="sr-only">Сортування</span>
+          <select value={sort} onChange={event => setSort(event.target.value)}>
+            <option value="featured">Добірка</option><option value="price-up">Дешевші</option><option value="price-down">Дорожчі</option>
+          </select>
+        </label>
+      </div>
+      <div className="category-strip" aria-label="Категорії" role="group">
+        {['', WAND_CATEGORY, ...categories].map(option => <button type="button" className="filter-pill" key={option} aria-pressed={category === option} onClick={() => setCategory(option)}>{option || 'Усі вироби'}</button>)}
+      </div>
+      {favoriteError && <p className="feedback" role="status">{favoriteError}</p>}
+      {productId && !loading && !selected && <p className="feedback" role="status">Цей товар наразі недоступний. <button type="button" className="text-button" onClick={closeProduct}>Закрити</button></p>}
+      {loading ? <div className="product-grid" role="status" aria-label="Завантажуємо каталог">{Array.from({ length: 4 }, (_, i) => <div className="skeleton" key={i} />)}</div>
+        : error && !products.length ? <div className="empty-state"><h3>Каталог тимчасово недоступний</h3><button type="button" className="button secondary" onClick={() => location.reload()}>Оновити</button></div>
+        : visible.length ? <div className="product-grid">{visible.map((product, i) => <ProductCard key={product.id} product={product} eager={i < 2} />)}</div>
+        : <div className="empty-state"><h3>{category === WAND_CATEGORY && !query ? 'Колекція готується' : 'Виробів не знайдено'}</h3>
+          <p>{category === WAND_CATEGORY && !query ? 'Палички з’являться тут після публікації майстернею.' : 'Спробуйте іншу назву або категорію.'}</p>
+          <button type="button" className="button secondary" onClick={() => { setCategory(''); setQuery(''); }}>Усі вироби</button>
+        </div>}
+    </section>
+    {selected && <ProductDetail key={selected.id} product={selected} onClose={closeProduct} onAdd={(product, color) => {
+      const added = addItem(product, color);
+      if (added) haptic();
+      return added;
+    }} />}
+  </>;
 }

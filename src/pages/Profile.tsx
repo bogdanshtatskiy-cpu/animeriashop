@@ -1,133 +1,75 @@
-import { useTranslation } from 'react-i18next';
+import { useCallback, useEffect, useState } from 'react';
+import { ArrowRight, ClipboardCopy, Package, RefreshCw, Settings, UserRound } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import WebApp from '@twa-dev/sdk';
-import { useState, useEffect } from 'react';
-import styles from '../App.module.css';
-import { Order } from '../store/useOrdersStore';
+import { api, ApiError } from '../lib/api';
+import { money, orderNumber, orderStatus, toKop } from '../lib/commerce';
+import { inTelegram, telegramLink, telegramUser } from '../lib/telegram';
+import type { Order } from '../store/useOrdersStore';
+
+type HistoryOrder = Pick<Order, 'id' | 'status' | 'createdAt' | 'items' | 'totalPrice' | 'ttn'>;
+const date = new Intl.DateTimeFormat('uk-UA', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Kyiv' });
 
 export default function Profile() {
-  const { t } = useTranslation();
-  
-  const user = WebApp.initDataUnsafe?.user;
-  const initData = WebApp.initData;
-  const adminId = import.meta.env.VITE_ADMIN_TELEGRAM_ID;
-
-  const [orders, setOrders] = useState<Order[]>([]);
+  const user = telegramUser();
+  const [orders, setOrders] = useState<HistoryOrder[]>([]);
+  const [cursor, setCursor] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [copyState, setCopyState] = useState('');
+  const canOrder = inTelegram();
+
+  const load = useCallback(async (signal?: AbortSignal, next?: string) => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await api<{ orders: HistoryOrder[]; cursor?: string }>('my_orders', { cursor: next }, { signal });
+      if (signal?.aborted) return;
+      setOrders(previous => next ? [...previous.filter(order => !result.orders.some(entry => entry.id === order.id)), ...result.orders] : result.orders);
+      setCursor(result.cursor);
+    } catch (error) {
+      if (!signal?.aborted) setError(error instanceof ApiError ? error.message : 'Не вдалося завантажити замовлення.');
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!user || !initData) return;
-    
-    const fetchOrders = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch('/api/my_orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ initData, userId: user.id })
-        });
-        const data = await res.json();
-        if (data.success) {
-          setOrders(data.orders);
-        } else {
-          setError(data.error || 'Failed to fetch orders');
-        }
-      } catch (e: any) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
+    if (!canOrder) return;
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [canOrder, load]);
 
-    fetchOrders();
-  }, [user, initData]);
-
-  const getStatusText = (status: Order['status']) => {
-    switch (status) {
-      case 'new': return 'Нове';
-      case 'processing': return 'В обробці';
-      case 'shipped': return 'Відправлено';
-      case 'completed': return 'Виконано';
-      case 'cancelled': return 'Скасовано';
-      default: return status;
-    }
+  const copy = async (ttn: string) => {
+    try { await navigator.clipboard.writeText(ttn); setCopyState('Номер ТТН скопійовано.'); }
+    catch { setCopyState('Скопіюйте номер ТТН вручну.'); }
   };
 
-
-  return (
-    <div>
-      <div className={styles.welcome}>
-        <h2>{t('Profile')}</h2>
-        {user ? (
-          <div className={styles.userInfo}>
-            <p><strong>{t('Name')}:</strong> {user.first_name} {user.last_name}</p>
-            {user.username && <p><strong>{t('Username')}:</strong> @{user.username}</p>}
-            <p className={styles.userId}>ID: {user.id}</p>
-          </div>
-        ) : (
-          <p>Авторизація через Telegram...</p>
-        )}
+  return <>
+    <div className="page-heading"><h1>Профіль</h1><p>Дані та історія покупок</p></div>
+    <section className="panel profile-card">
+      <span className="profile-avatar"><UserRound size={25} strokeWidth={1.5} /></span>
+      <div><h2>{user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : 'Гість'}</h2>
+        <p>{user?.username ? '@' + user.username : canOrder ? 'Акаунт Telegram' : 'Відкрийте магазин у Telegram, щоб переглянути замовлення.'}</p></div>
+      {(!canOrder && telegramLink()) && <a className="button secondary" href={telegramLink()}>У Telegram <ArrowRight size={17} /></a>}
+      {user && String(user.id) === String(import.meta.env.VITE_ADMIN_TELEGRAM_ID) && <Link to="/admin" className="button secondary"><Settings size={17} /> Керування</Link>}
+    </section>
+    {canOrder && <section className="history" aria-labelledby="history-title">
+      <div className="section-heading"><h2 id="history-title">Мої замовлення</h2><button type="button" className="icon-button" disabled={loading} aria-label="Оновити історію" onClick={() => void load()}><RefreshCw size={18} /></button></div>
+      {error && <p className="feedback" role="alert">{error}</p>}
+      {loading && !orders.length && <p className="muted" role="status">Завантажуємо замовлення…</p>}
+      {!loading && !error && !orders.length && <div className="empty-state"><Package size={30} strokeWidth={1.4} /><h3>Замовлень поки немає</h3><Link to="/" className="button primary">До каталогу</Link></div>}
+      <div className="history-grid">
+        {orders.map(order => <article className="panel history-card" key={order.id}>
+          <div className="history-heading"><div><h3>{orderNumber(order.id)}</h3>{order.createdAt > 0 && <time dateTime={new Date(order.createdAt).toISOString()}>{date.format(order.createdAt)}</time>}</div><span className={'status-pill status-' + order.status}>{orderStatus[order.status] ?? 'Невідомо'}</span></div>
+          <ul>{Array.isArray(order.items) && order.items.map((item, index) => <li key={item.cartItemId ?? index}><span>{item.title}{item.selectedColor ? ' / ' + item.selectedColor : ''}</span><strong>× {item.quantity}</strong></li>)}</ul>
+          <div className="history-total"><strong>{money(toKop(order.totalPrice))}</strong>{order.ttn && <button type="button" className="button secondary" onClick={() => void copy(order.ttn!)} aria-label={'Скопіювати ТТН ' + order.ttn}>
+            <ClipboardCopy size={15} /> {order.ttn}
+          </button>}</div>
+        </article>)}
       </div>
-
-      {user && String(user.id) === String(adminId) && (
-        <div className={styles.settingsSection}>
-          <Link to="/admin">
-            <button className={styles.submitBtn}>{t('Admin_Panel')}</button>
-          </Link>
-        </div>
-      )}
-
-      {user && (
-        <div style={{ padding: '0 16px', marginTop: '24px' }}>
-          <h3 style={{ marginBottom: '16px' }}>Мої замовлення</h3>
-          {loading ? (
-            <p>Завантаження...</p>
-          ) : error ? (
-            <p style={{ color: 'var(--danger-color)' }}>Помилка: {error}</p>
-          ) : orders.length === 0 ? (
-            <p style={{ color: 'var(--text-secondary)' }}>У вас ще немає замовлень.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '30px' }}>
-              {orders.map(order => (
-                <div key={order.id} style={{ background: 'var(--card-bg)', padding: '16px', borderRadius: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <strong>Замовлення #{order.id.slice(-6).toUpperCase()}</strong>
-                    <span style={{ 
-                      fontSize: '12px', padding: '4px 8px', borderRadius: '12px', 
-                      background: order.status === 'completed' ? '#4caf50' : order.status === 'cancelled' ? '#f44336' : 'var(--primary-color)',
-                      color: 'white'
-                    }}>
-                      {getStatusText(order.status)}
-                    </span>
-                  </div>
-                  <p style={{ fontSize: '14px', margin: '4px 0', color: 'var(--text-secondary)' }}>
-                    {new Date(order.createdAt).toLocaleDateString('uk-UA')}
-                  </p>
-                  
-                  {order.ttn && (
-                    <p style={{ margin: '8px 0', padding: '8px', background: 'var(--bg-color)', borderRadius: '8px', fontSize: '14px' }}>
-                      <strong>ТТН:</strong> {order.ttn}
-                    </p>
-                  )}
-
-                  <div style={{ marginTop: '12px' }}>
-                    {order.items.map(item => (
-                      <div key={item.cartItemId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', margin: '4px 0' }}>
-                        <span>{item.title} {item.selectedColor ? `(${item.selectedColor})` : ''} x{item.quantity}</span>
-                      </div>
-                    ))}
-                  </div>
-                  
-                  <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '12px', paddingTop: '12px', textAlign: 'right' }}>
-                    <strong>Сума: ₴ {order.totalPrice}</strong>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+      <p className="sr-only" role="status">{copyState}</p>
+      {cursor && <button type="button" className="button secondary" disabled={loading} onClick={() => void load(undefined, cursor)}>Показати ще</button>}
+    </section>}
+  </>;
 }

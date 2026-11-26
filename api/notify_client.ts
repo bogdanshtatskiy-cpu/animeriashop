@@ -1,58 +1,43 @@
-export default async function handler(req: any, res: any) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
+import { FieldValue } from 'firebase-admin/firestore';
+import { orderTransitions } from '../src/lib/commerce.js';
+import type { OrderStatus } from '../src/lib/commerce.js';
+import { isTrackedStock } from '../server/checkout.js';
+import { database, requireAdmin } from '../server/firebase.js';
+import { documentId, HttpError, post, requireField, stringField } from '../server/http.js';
+import { deliverOrderNotification } from '../server/notifications.js';
 
-  const { userId, orderId, status, ttn } = req.body;
-
-  if (!userId || !status) {
-    return res.status(400).json({ error: 'Missing userId or status' });
-  }
-
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-
-  if (!token) {
-    console.error('Missing TELEGRAM_BOT_TOKEN');
-    return res.status(500).json({ error: 'Server configuration error' });
-  }
-
-  let text = '';
-  switch (status) {
-    case 'processing':
-      text = `⏳ Ваше замовлення #${orderId.slice(0, 5)} взято в роботу!`;
-      break;
-    case 'shipped':
-      text = `📦 Ваше замовлення #${orderId.slice(0, 5)} відправлено!\n\nНомер ТТН: ${ttn || 'Уточнюється'}\nПосилка вже прямує до вас!`;
-      break;
-    case 'completed':
-      text = `✅ Ваше замовлення #${orderId.slice(0, 5)} успішно виконано! Дякуємо, що обрали нас.\n\nБудь ласка, напишіть ваш відгук прямо сюди, у чат з ботом 👇`;
-      break;
-    case 'cancelled':
-      text = `❌ Ваше замовлення #${orderId.slice(0, 5)} скасовано. Якщо у вас є питання, зверніться до підтримки.`;
-      break;
-    default:
-      return res.status(200).json({ success: true, ignored: true });
-  }
-
-  try {
-    const telegramResponse = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        chat_id: userId,
-        text: text,
-      }),
+export default post(async (request, response, body) => {
+  await requireAdmin(request);
+  const db = database();
+  const ref = db.collection('orders').doc(documentId(body.orderId));
+  if (body.action !== 'retry') {
+    const status = stringField(body.status, 20) as OrderStatus;
+    requireField(Object.hasOwn(orderTransitions, status) && status !== 'new', 'Некоректний статус.');
+    const ttn = status === 'shipped' ? stringField(body.ttn, 20).replace(/\s/g, '') : '';
+    requireField(status !== 'shipped' || /^\d{14}$/.test(ttn), 'Вкажіть 14 цифр номера ТТН.');
+    await db.runTransaction(async (tx) => {
+      const order = await tx.get(ref);
+      if (!order.exists) throw new HttpError(404, 'NOT_FOUND', 'Замовлення не знайдено.');
+      const current = order.get('status') as OrderStatus;
+      if (current === status && (status !== 'shipped' || order.get('ttn') === ttn)) return;
+      if (!orderTransitions[current]?.includes(status)) throw new HttpError(409, 'INVALID_STATUS', 'Цей перехід статусу недоступний.');
+      if (order.get('customerNotice.leaseUntil') > Date.now()) throw new HttpError(409, 'NOTICE_BUSY', 'Попереднє сповіщення ще надсилається.');
+      if (status === 'cancelled' && current !== 'shipped') {
+        const quantities = order.get('reservedStock') as { id: string; quantity: number }[] | undefined;
+        if (quantities?.length) {
+          const products = await tx.getAll(...quantities.flatMap(item => [
+            db.collection('products').doc(item.id), db.collection('product_drafts').doc(item.id),
+          ]));
+          quantities.forEach(({ quantity }, index) => {
+            const current = products[index * 2];
+            const product = current.exists ? current : products[index * 2 + 1];
+            if (product.exists && isTrackedStock(product.get('stock'))) tx.update(product.ref, { stock: FieldValue.increment(quantity) });
+          });
+        }
+      }
+      tx.update(ref, { status, ...(ttn ? { ttn } : {}), customerNotice: { state: 'pending' } });
     });
-
-    if (!telegramResponse.ok) {
-      throw new Error(`Telegram API Error: ${telegramResponse.statusText}`);
-    }
-
-    return res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Error sending Telegram notification:', error);
-    return res.status(500).json({ error: 'Failed to send notification' });
   }
-}
+  const result = await deliverOrderNotification(ref, 'customerNotice');
+  return response.json({ success: true, ...result });
+});

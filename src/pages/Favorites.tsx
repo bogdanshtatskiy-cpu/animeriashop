@@ -1,60 +1,18 @@
+import { Heart } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ProductCard } from '../components/Product';
 import { useFavoritesStore } from '../store/useFavoritesStore';
 import { useProductsStore } from '../store/useProductsStore';
-import WebApp from '@twa-dev/sdk';
-import { Heart, HeartOff } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
-import styles from '../App.module.css';
 
 export default function Favorites() {
-  const { t } = useTranslation();
-  const { favorites, toggleFavorite } = useFavoritesStore();
-  const { products } = useProductsStore();
-
-  const favoriteProducts = products.filter(p => favorites.includes(p.id));
-
-  return (
-    <div>
-      <div className={styles.welcome}>
-        <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px'}}>
-          <Heart fill="var(--danger-color)" color="var(--danger-color)" size={28} />
-          <h2 style={{margin: 0}}>{t('Favorites_Title')}</h2>
-        </div>
-      </div>
-
-      {favorites.length === 0 ? (
-        <div className={styles.welcome}>
-          <HeartOff size={48} color="var(--text-secondary)" style={{marginBottom: '16px', opacity: 0.5}} />
-          <p style={{color: 'var(--text-secondary)'}}>{t('Favorites_Empty')}</p>
-        </div>
-      ) : (
-        <div className={styles.productsGrid}>
-          {favoriteProducts.map((item) => (
-            <div key={item.id} className={styles.productCard}>
-              {(item.imageUrls?.[0] || item.imageUrl) ? (
-                <div style={{position: 'relative', width: '100%', aspectRatio: '1', overflow: 'hidden', borderRadius: '8px'}}>
-                  <img src={item.imageUrls?.[0] || item.imageUrl} alt={item.title} className={styles.productImage} loading="lazy" />
-                </div>
-              ) : (
-                <div className={styles.productImagePlaceholder}></div>
-              )}
-              <h3>{item.title}</h3>
-              <p className={styles.price}>₴ {item.price}</p>
-              
-              <button 
-                className={styles.removeBtn} 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (WebApp.initDataUnsafe?.user?.id) {
-                    toggleFavorite(WebApp.initDataUnsafe.user.id, item.id);
-                  }
-                }}
-              >
-                {t('Remove')}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  const { favorites, loading, error, loadFavorites } = useFavoritesStore();
+  const { products, loading: productsLoading } = useProductsStore();
+  const saved = products.filter(product => product.available !== false && favorites.includes(product.id));
+  return <>
+    <div className="page-heading"><h1>Обране</h1><p>Збережені вироби майстерні</p></div>
+    {error && <p className="feedback" role="status">{error} <button type="button" className="text-button" onClick={() => void loadFavorites()}>Повторити</button></p>}
+    {loading || productsLoading ? <div className="empty-state" role="status">Завантажуємо обране…</div>
+      : saved.length ? <div className="product-grid">{saved.map(product => <ProductCard key={product.id} product={product} />)}</div>
+      : <div className="empty-state"><Heart size={30} strokeWidth={1.4} /><h2>Тут поки порожньо</h2><p>Зберігайте товари в каталозі, щоб швидко до них повернутися.</p><Link to="/" className="button primary">До каталогу</Link></div>}
+  </>;
 }

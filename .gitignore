@@ -11,6 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
+*.tsbuildinfo
+playwright-report/
+test-results/
+.vercel/
+firebase-debug.log
 
 # Editor directories and files
 .vscode/*
@@ -25,7 +30,5 @@ dist-ssr
 
 # Env files
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
