@@ -120,7 +120,9 @@ export default function App() {
         </Suspense>
       </main>
       {!keyboardOpen && <nav className="glass-nav" aria-label="Розділи магазину" style={{ '--active-tab': Math.max(0, activeTab) } as CSSProperties}>
-        <span aria-hidden="true" className="glass-indicator" data-visible={activeTab >= 0} />
+        <span aria-hidden="true" className="glass-indicator" data-visible={activeTab >= 0}>
+          {activeTab >= 0 && <span key={activeTab} className="glass-lens" />}
+        </span>
         {links.map(({ to, label, Icon }) => (
           <NavLink end={to === '/'} key={to} to={to} className="glass-tab">
             <span className="nav-icon"><Icon size={21} strokeWidth={1.65} />{to === '/cart' && count > 0 && <span className="nav-count">{count > 99 ? '99+' : count}</span>}</span>

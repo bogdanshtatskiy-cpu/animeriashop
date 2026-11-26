@@ -62,7 +62,7 @@ export default function Profile() {
       <div className="history-grid">
         {orders.map(order => <article className="panel history-card" key={order.id}>
           <div className="history-heading"><div><h3>{orderNumber(order.id)}</h3>{order.createdAt > 0 && <time dateTime={new Date(order.createdAt).toISOString()}>{date.format(order.createdAt)}</time>}</div><span className={'status-pill status-' + order.status}>{orderStatus[order.status] ?? 'Невідомо'}</span></div>
-          <ul>{Array.isArray(order.items) && order.items.map((item, index) => <li key={item.cartItemId ?? index}><span>{item.title}{item.selectedColor ? ' / ' + item.selectedColor : ''}</span><strong>× {item.quantity}</strong></li>)}</ul>
+          <ul>{Array.isArray(order.items) && order.items.map((item, index) => <li key={item.cartItemId ?? index}><span>{item.title}{item.selectedColor ? ' / ' + item.selectedColor : ''}{item.gift && ' · Подарунковий набір'}</span><strong>× {item.quantity}</strong></li>)}</ul>
           <div className="history-total"><strong>{money(toKop(order.totalPrice))}</strong>{order.ttn && <button type="button" className="button secondary" onClick={() => void copy(order.ttn!)} aria-label={'Скопіювати ТТН ' + order.ttn}>
             <ClipboardCopy size={15} /> {order.ttn}
           </button>}</div>

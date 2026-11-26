@@ -1,5 +1,6 @@
 import { createServer } from 'vite';
 import type { Plugin } from 'vite';
+import adminOrder from '../api/admin_order';
 import checkout from '../api/checkout';
 import favorites from '../api/favorites';
 import orders from '../api/my_orders';
@@ -44,7 +45,7 @@ globalThis.fetch = async (input, init) => {
 };
 
 const handlers = new Map([
-  ['checkout', checkout], ['favorites', favorites], ['my_orders', orders], ['notify', notify],
+  ['admin_order', adminOrder], ['checkout', checkout], ['favorites', favorites], ['my_orders', orders], ['notify', notify],
   ['notify_client', notifyClient], ['np', nova], ['telegram_webhook', webhook],
 ]);
 

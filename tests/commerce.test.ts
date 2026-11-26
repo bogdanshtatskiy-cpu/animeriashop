@@ -49,3 +49,21 @@ test('uses server catalog prices, sums variant stock, and rejects duplicate quan
   assert.throws(() => priceLines([{ ...lines[0], color: 'Фіолетовий' }], catalog), /варіант/);
   assert.throws(() => parseLines([{ id: 'wand', quantity: 20 }, { id: 'wand', quantity: 1 }]), HttpError);
 });
+
+test('uses catalog gift pricing and shares finish inventory across both packages', () => {
+  const product: Product = {
+    id: 'wand', title: 'Паличка', price: 420, colors: ['Бронза'], variantStock: { Бронза: 2 },
+    giftSet: { price: 80.25, contents: 'Паличка, підставка та коробка' },
+  };
+  const catalog = new Map([[product.id, product]]);
+  const standard = { id: 'wand', color: 'Бронза', quantity: 1 };
+  const gift = { ...standard, gift: true, price: 1 };
+  const lines = parseLines([standard, gift]);
+  const [plain, wrapped] = priceLines(lines, catalog);
+  assert.equal(plain.unitPrice, 42_000);
+  assert.equal(wrapped.unitPrice, 50_025);
+  assert.equal(wrapped.giftContents, product.giftSet?.contents);
+  assert.notEqual(wrapped.cartItemId, plain.cartItemId);
+  assert.throws(() => priceLines(parseLines([standard, gift, gift]), catalog), /доступно 2/);
+  assert.throws(() => priceLines(lines, new Map([[product.id, { ...product, giftSet: null }]])), /недоступний/);
+});

@@ -4,6 +4,7 @@ import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { OrderStatus } from '../lib/commerce';
 import type { CartItem } from './useCartStore';
+import type { ManualOrderDetails } from '../lib/manual-order';
 
 export interface Notice {
   state: 'pending' | 'sending' | 'sent' | 'failed';
@@ -13,7 +14,8 @@ export interface Notice {
 
 export interface Order {
   id: string;
-  userId: number;
+  userId?: number;
+  manual?: ManualOrderDetails;
   username?: string;
   firstName: string;
   lastName?: string;

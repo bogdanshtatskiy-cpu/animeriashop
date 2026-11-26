@@ -5,10 +5,10 @@ import { Link } from 'react-router-dom';
 import DeliverySearch, { type DeliveryOption } from '../components/DeliverySearch';
 import { ProductPhoto } from '../components/Product';
 import { api, ApiError } from '../lib/api';
-import { MAX_LINE_QUANTITY, MIN_ORDER_KOP, money, orderNumber, unitPrice } from '../lib/commerce';
+import { giftPrice, MAX_LINE_QUANTITY, MIN_ORDER_KOP, money, orderNumber, unitPrice } from '../lib/commerce';
 import type { Quote } from '../lib/commerce';
 import { haptic, inTelegram, telegramLink, telegramUser } from '../lib/telegram';
-import { useCartStore } from '../store/useCartStore';
+import { cartStockRemaining, useCartStore } from '../store/useCartStore';
 import { useProductsStore } from '../store/useProductsStore';
 
 type Receipt = { id: string; total: number };
@@ -34,6 +34,8 @@ async function checkoutKey(signature: string, basket: string, last?: PendingOrde
   return pending;
 }
 
+const cartPrice = (product: Parameters<typeof cartStockRemaining>[0], gift: boolean) => unitPrice(product) + (gift ? giftPrice(product) : 0);
+
 export default function Cart() {
   const { items, removeItem, updateQuantity, clearCart } = useCartStore();
   const { products, loading, error: catalogError, refreshProducts } = useProductsStore();
@@ -53,17 +55,16 @@ export default function Cart() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [pending, setPending] = useState(initialPending.current);
   const live = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
-  const lines = items.map(item => ({ id: item.id, color: item.selectedColor ?? '', quantity: item.quantity }));
+  const lines = items.map(item => ({ id: item.id, color: item.selectedColor ?? '', quantity: item.quantity, ...(item.gift ? { gift: true } : {}) }));
   const signature = JSON.stringify(lines);
   const quote = applied?.signature === signature ? applied.quote : null;
-  const localSubtotal = items.reduce((sum, item) => sum + unitPrice(live.get(item.id) ?? item) * item.quantity, 0);
+  const localSubtotal = items.reduce((sum, item) => sum + cartPrice(live.get(item.id) ?? item, Boolean(item.gift)) * item.quantity, 0);
   const subtotal = quote?.subtotal ?? localSubtotal;
   const total = quote?.total ?? localSubtotal;
   const unavailable = (item: typeof items[number]) => {
     const product = live.get(item.id);
     if (!product) return !loading && !catalogError;
-    const count = items.filter(line => line.id === item.id).reduce((sum, line) => sum + line.quantity, 0);
-    return product.available === false || (typeof product.stock === 'number' && count > product.stock) ||
+    return product.available === false || (item.gift && !giftPrice(product)) || cartStockRemaining(product, items, item.selectedColor) < 0 ||
       (product.colors?.length ? !product.colors.includes(item.selectedColor ?? '') : Boolean(item.selectedColor));
   };
   const hasUnavailable = items.some(unavailable);
@@ -154,17 +155,18 @@ export default function Cart() {
             <h2 id="items-title"><Package size={20} strokeWidth={1.55} /> Вироби</h2>
             {items.map(item => {
               const product = live.get(item.id) ?? item;
-              const limitStock = typeof product.stock === 'number' && items.filter(line => line.id === item.id).reduce((sum, line) => sum + line.quantity, 0) >= product.stock;
-              const linePrice = quote?.lines.find(line => line.id === item.id && line.color === (item.selectedColor ?? ''))?.unitPrice ?? unitPrice(product);
+              const limitStock = cartStockRemaining(product, items, item.selectedColor) <= 0;
+              const linePrice = quote?.lines.find(line => line.id === item.id && line.color === (item.selectedColor ?? '') && Boolean(line.gift) === Boolean(item.gift))?.unitPrice ?? cartPrice(product, Boolean(item.gift));
               return <article className="cart-line" key={item.cartItemId}>
                 <Link className="line-photo" aria-label={product.title} to={'/?productId=' + encodeURIComponent(product.id)}><ProductPhoto product={product} /></Link>
                 <div className="line-copy"><h3>{product.title}</h3>{item.selectedColor && <p>{item.selectedColor}</p>}
-                  <strong>{money(linePrice * item.quantity)}</strong>{unavailable(item) && <p className="line-error">Перевірте наявність або варіант</p>}</div>
+                  {item.gift && <p>Подарунковий набір</p>}
+                  <strong>{money(linePrice * item.quantity)}</strong>{unavailable(item) && <p className="line-error">Перевірте наявність, оздоблення або комплектацію</p>}</div>
                 <div className="line-actions">
                   <div className="stepper">
                     <button type="button" aria-label={'Зменшити кількість — ' + item.title} disabled={item.quantity <= 1 || Boolean(busy)} onClick={() => updateQuantity(item.cartItemId, item.quantity - 1)}><Minus size={15} /></button>
                     <span aria-label="Кількість">{item.quantity}</span>
-                    <button type="button" aria-label={'Збільшити кількість — ' + item.title} disabled={limitStock || item.quantity >= MAX_LINE_QUANTITY || Boolean(busy)} onClick={() => updateQuantity(item.cartItemId, item.quantity + 1)}><Plus size={15} /></button>
+                    <button type="button" aria-label={'Збільшити кількість — ' + item.title} disabled={unavailable(item) || limitStock || item.quantity >= MAX_LINE_QUANTITY || Boolean(busy)} onClick={() => updateQuantity(item.cartItemId, item.quantity + 1)}><Plus size={15} /></button>
                   </div>
                   <button className="icon-button delete-button" type="button" aria-label={'Видалити — ' + item.title} disabled={Boolean(busy)} onClick={() => removeItem(item.cartItemId)}><Trash2 size={17} strokeWidth={1.6} /></button>
                 </div>

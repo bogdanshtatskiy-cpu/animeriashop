@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { checkoutId, isTrackedStock, makeQuote, parseLines, verifyMinimum } from '../server/checkout.js';
+import { configuredStock, finishStock } from '../src/lib/commerce.js';
+import type { StockReservation } from '../server/checkout.js';
+import { checkoutId, makeQuote, parseLines, verifyMinimum } from '../server/checkout.js';
 import { database } from '../server/firebase.js';
 import { HttpError, post, requireField, stringField } from '../server/http.js';
 import { deliverOrderNotification } from '../server/notifications.js';
@@ -52,12 +54,27 @@ export default post(async (_request, response, body) => {
     const { items, quote, products, promo } = await makeQuote(db, lines, code, tx);
     verifyMinimum(quote.subtotal);
     if (quote.total !== expectedTotal) throw new HttpError(409, 'PRICE_CHANGED', 'Ціна змінилася. Перевірте оновлений підсумок.');
-    const reservedStock: { id: string; quantity: number }[] = [];
+    const reservedStock: StockReservation[] = [];
     for (const [id, product] of products) {
-      if (!isTrackedStock(product.stock)) continue;
-      const quantity = items.filter(item => item.id === id).reduce((sum, item) => sum + item.quantity, 0);
-      reservedStock.push({ id, quantity });
-      tx.update(db.collection('products').doc(id), { stock: product.stock - quantity });
+      const productItems = items.filter(item => item.id === id);
+      const stock = configuredStock(product.stock);
+      const quantity = stock === undefined ? 0 : productItems.reduce((sum, item) => sum + item.quantity, 0);
+      const variantStock = new Map(Object.entries(product.variantStock ?? {}));
+      const finishUnits = new Map<string, number>();
+      for (const item of productItems) {
+        const color = item.selectedColor ?? '';
+        if (finishStock(product, color) !== undefined) finishUnits.set(color, (finishUnits.get(color) ?? 0) + item.quantity);
+      }
+      const finishes = [...finishUnits].map(([color, quantity]) => {
+        variantStock.set(color, variantStock.get(color)! - quantity);
+        return { color, quantity };
+      });
+      if (!quantity && !finishes.length) continue;
+      reservedStock.push({ id, quantity, ...(finishes.length ? { finishes } : {}) });
+      tx.update(db.collection('products').doc(id), {
+        ...(stock === undefined ? {} : { stock: stock - quantity }),
+        ...(finishes.length ? { variantStock: Object.fromEntries(variantStock) } : {}),
+      });
     }
     if (promo) tx.update(promo.ref, { usageCount: promo.nextCount });
     tx.set(throttle, { hour, count: count + 1 });

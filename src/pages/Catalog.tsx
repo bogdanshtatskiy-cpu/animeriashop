@@ -102,8 +102,8 @@ export default function Catalog() {
           <button type="button" className="button secondary" onClick={() => { setCategory(''); setQuery(''); }}>Усі вироби</button>
         </div>}
     </section>
-    {selected && <ProductDetail key={selected.id} product={selected} onClose={closeProduct} onAdd={(product, color) => {
-      const added = addItem(product, color);
+    {selected && <ProductDetail key={selected.id} product={selected} onClose={closeProduct} onAdd={(product, color, gift) => {
+      const added = addItem(product, color, gift);
       if (added) haptic();
       return added;
     }} />}

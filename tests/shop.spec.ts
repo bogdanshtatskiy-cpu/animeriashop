@@ -18,7 +18,9 @@ test.beforeEach(async ({ page }) => {
     db.doc('products/wand-test').set({
       title: 'Паличка Герміони', character: 'Герміона', price: 450, category: 'Чарівні палички', stock: 2,
       material: 'Фотополімерна смола', technology: 'resin', dimensions: '32 см', finish: 'Ручне фарбування',
-      colors: ['Мідь', 'Бронза'], imageUrls: ['/media/atelier.webp', '/logo.png'], featured: true, available: true,
+      colors: ['Мідь', 'Бронза', 'Графіт'], variantStock: { Мідь: 2, Бронза: 1, Графіт: 0 },
+      packageContents: 'Паличка та захисне пакування', leadDays: 4,
+      giftSet: { price: 150, contents: 'Паличка, підставка та коробка' }, imageUrls: ['/media/atelier.webp', '/logo.png'], featured: true, available: true,
     }),
     db.doc('products/other-test').set({ title: 'Брелок майстерні', price: 120, category: 'Аксесуари', imageUrl: '/logo.png' }),
     db.doc('promocodes/WAND10').set({ code: 'WAND10', discountType: 'percent', discountValue: 10, usageCount: 0, usageLimit: 1 }),
@@ -47,8 +49,24 @@ test('mobile catalog, synced favorites, checkout, and order history', async ({ p
   await expect(detail.getByText('Ручне фарбування')).toBeVisible();
   await detail.getByRole('button', { name: 'Наступне фото' }).click();
   await expect(detail.getByRole('button', { name: 'Фото 2' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(detail.getByText('До відправлення · до 4 дн.')).toBeVisible();
+  await expect(detail.getByText('Паличка та захисне пакування')).toBeVisible();
+  await detail.getByText('Графіт', { exact: true }).click();
+  await expect(detail.getByRole('button', { name: 'Недоступно' })).toBeDisabled();
   await detail.getByText('Бронза', { exact: true }).click();
-  await detail.getByRole('button', { name: 'Додати в кошик' }).click();
+  await expect(detail.getByText('У наявності · 1 шт.')).toBeVisible();
+  await detail.getByRole('radio', { name: /Подарунковий набір/ }).check();
+  const addItem = detail.getByRole('button', { name: 'Додати в кошик' });
+  const scroller = detail.locator('.dialog-layout');
+  const footerOffset = () => addItem.evaluate(node => node.getBoundingClientRect().top - node.closest('dialog')!.getBoundingClientRect().top);
+  await scroller.evaluate(node => { node.scrollTop = 0; });
+  const start = await footerOffset();
+  await scroller.evaluate(node => { node.scrollTop = node.scrollHeight; });
+  await expect.poll(() => scroller.evaluate(node => node.scrollTop)).toBeGreaterThan(60);
+  expect(Math.abs(await footerOffset() - start)).toBeLessThan(1);
+  await expect(addItem).toBeInViewport();
+  await expect(detail.locator('.detail-total').getByText(/600\s*грн/)).toBeVisible();
+  await addItem.click();
   await detail.getByRole('link', { name: 'До кошика' }).click();
   await expect(page.getByText('Бронза')).toBeVisible();
 
@@ -66,12 +84,19 @@ test('mobile catalog, synced favorites, checkout, and order history', async ({ p
   await expect(page.getByText('Застосовано WAND10')).toBeVisible();
   await page.getByRole('button', { name: 'Оформити замовлення' }).click();
   await expect(page.getByRole('heading', { name: 'Замовлення прийнято' })).toBeVisible();
-  await expect(page.getByText(/405\s*грн/)).toBeVisible();
+  await expect(page.getByText(/540\s*грн/)).toBeVisible();
   await page.getByRole('link', { name: 'Мої замовлення' }).click();
-  await expect(page.getByText('Паличка Герміони / Бронза')).toBeVisible();
+  await expect(page.getByText('Паличка Герміони / Бронза · Подарунковий набір')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => innerWidth));
   await expect.poll(async () => (await db.doc('promocodes/WAND10').get()).get('usageCount')).toBe(1);
-  expect((await db.doc('products/wand-test').get()).get('stock')).toBe(1);
+  const remaining = await db.doc('products/wand-test').get();
+  expect(remaining.get('stock')).toBe(1);
+  expect(remaining.get('variantStock')).toMatchObject({ Бронза: 0, Мідь: 2 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const navigation = page.getByRole('navigation');
+  await navigation.getByRole('link', { name: 'Обране' }).click();
+  await expect(navigation.getByRole('link', { name: 'Обране' })).toHaveAttribute('aria-current', 'page');
+  expect(await navigation.locator('.glass-lens').evaluate(node => parseFloat(getComputedStyle(node).animationDuration))).toBeLessThan(.001);
 });
 
 test('drafts stay private and backend enforces authorization, stock, promos, and retries', async ({ page, request }, info) => {
@@ -151,9 +176,56 @@ test('drafts stay private and backend enforces authorization, stock, promos, and
   expect(second.status()).toBe(201);
   const { id: secondId } = await second.json();
   expect((await db.doc('products/wand-test').get()).get('stock')).toBe(0);
+  expect((await db.doc('products/wand-test').get()).get('variantStock')).toMatchObject({ Мідь: 0 });
   await page.getByRole('combobox', { name: 'Змінити статус' }).selectOption('cancelled');
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'Оновити статус' }).click();
   await expect.poll(async () => (await db.doc('orders/' + secondId).get()).get('status')).toBe('cancelled');
-  expect((await db.doc('products/wand-test').get()).get('stock')).toBe(1);
+  const remaining = await db.doc('products/wand-test').get();
+  expect(remaining.get('stock')).toBe(1);
+  expect(remaining.get('variantStock')).toMatchObject({ Бронза: 1, Мідь: 1 });
+});
+
+test('manual orders are private, idempotent, and support pickup and partial payment', async ({ page, request }) => {
+  expect((await request.post('/api/admin_order', { data: {} })).status()).toBe(401);
+  await page.goto('/admin');
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Пароль').fill(password);
+  await page.getByRole('button', { name: 'Увійти' }).click();
+  await page.getByRole('button', { name: 'Замовлення', exact: true }).click();
+  await page.getByRole('button', { name: 'Додати замовлення' }).click();
+  const form = page.getByRole('region', { name: 'Нове ручне замовлення' });
+  await form.getByLabel('Ім’я та прізвище').fill('Олена Коваль');
+  await form.getByLabel('Інший контакт').fill('@sample');
+  await form.getByLabel('Виріб 1').fill('Паличка з ручним фарбуванням');
+  await form.getByLabel('Ціна за шт., грн').fill('450');
+  await form.getByRole('button', { name: 'Додати позицію' }).click();
+  await form.getByLabel('Виріб 2').fill('Підставка');
+  await form.getByLabel('Кількість').nth(1).fill('2');
+  await form.getByLabel('Ціна за шт., грн').nth(1).fill('70.25');
+  await form.getByLabel('Спосіб доставки').selectOption('pickup');
+  await form.getByLabel('Адреса чи місце зустрічі').fill('Майстерня');
+  await form.getByLabel('Уже отримано, грн').fill('100');
+  await form.getByLabel('Примітки').fill('Матове покриття');
+  const create = page.waitForRequest('**/api/admin_order');
+  await form.getByRole('button', { name: 'Зберегти замовлення' }).click();
+  const sent = await create;
+  await expect(page.getByText(/Замовлення додано до активних/)).toBeVisible();
+  const card = page.locator('.history-card');
+  await expect(card.getByText('Олена Коваль')).toBeVisible();
+  await expect(card.getByText('Threads · @sample')).toBeVisible();
+  await expect(card.getByText(/Післяплата · До сплати 490,5/)).toBeVisible();
+  await expect(card.getByText('Матове покриття')).toBeVisible();
+  expect((await request.post('/api/admin_order', { headers: { Authorization: sent.headers().authorization }, data: sent.postDataJSON() })).status()).toBe(200);
+  expect((await db.collection('orders').get()).size).toBe(1);
+  const history = await request.post('/api/my_orders', { data: { initData: signUser(777) } });
+  expect((await history.json()).orders).toEqual([]);
+  await card.getByLabel('Змінити статус').selectOption('processing');
+  await card.getByRole('button', { name: 'Оновити статус' }).click();
+  await expect(card.getByText('У роботі')).toBeVisible();
+  await card.getByLabel('Змінити статус').selectOption('shipped');
+  await expect(card.getByLabel('ТТН')).toHaveCount(0);
+  await card.getByRole('button', { name: 'Оновити статус' }).click();
+  await expect(card.getByText('Відправлено')).toBeVisible();
+  expect((await db.collection('orders').get()).docs[0].get('customerNotice')).toBeUndefined();
 });

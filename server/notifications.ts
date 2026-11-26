@@ -26,7 +26,7 @@ export async function deliverOrderNotification(ref: DocumentReference, type: 'ad
   const number = orderNumber(ref.id);
   const items = Array.isArray(task.items) ? task.items.map(item => {
     const variant = item.selectedColor ? ' / ' + item.selectedColor : '';
-    return item.quantity + ' × ' + item.title + variant;
+    return item.quantity + ' × ' + item.title + variant + (item.gift ? ' · Подарунковий набір' : '');
   }).join('\n') : '';
   const text = type === 'adminNotice'
     ? ['Animeria · Нове замовлення ' + number, money(toKop(task.totalPrice)), items, 'Контакти й доставка — в адмінпанелі.'].join('\n\n')

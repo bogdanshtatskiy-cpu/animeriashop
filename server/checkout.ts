@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DocumentReference, Firestore, Transaction } from 'firebase-admin/firestore';
-import { discounted, MAX_LINE_QUANTITY, MAX_ORDER_LINES, MIN_ORDER_KOP, unitPrice } from '../src/lib/commerce.js';
+import { configuredStock, discounted, finishStock, giftPrice, MAX_LINE_QUANTITY, MAX_ORDER_LINES, MIN_ORDER_KOP, unitPrice, variantKey } from '../src/lib/commerce.js';
 import type { CheckoutLine, Quote } from '../src/lib/commerce.js';
 import type { CartItem, Product } from '../src/store/useCartStore.js';
 import { documentId, HttpError, record, requireField, stringField } from './http.js';
@@ -14,19 +14,22 @@ export function parseLines(input: unknown): CheckoutLine[] {
     const line = record(value);
     const id = documentId(line.id);
     const color = line.color === undefined ? '' : stringField(line.color, 80);
-    const key = JSON.stringify([id, color]);
+    requireField(line.gift === undefined || typeof line.gift === 'boolean', 'Перевірте комплектацію виробу.');
+    const gift = line.gift === true;
+    const key = variantKey(id, color, gift);
     const quantity = line.quantity as number;
     requireField(Number.isInteger(quantity) && quantity > 0 && quantity <= MAX_LINE_QUANTITY, 'Перевірте кількість товару.');
     const combined = (lines.get(key)?.quantity ?? 0) + quantity;
     requireField(combined <= MAX_LINE_QUANTITY, 'Перевірте кількість товару.');
-    lines.set(key, { id, color, quantity: combined });
+    lines.set(key, { id, color, quantity: combined, ...(gift ? { gift } : {}) });
   }
   return [...lines.values()];
 }
 
 export function priceLines(lines: CheckoutLine[], products: Map<string, Product>): PricedLine[] {
   const stockRequested = new Map<string, number>();
-  return lines.map(({ id, color, quantity }) => {
+  const finishRequested = new Map<string, number>();
+  return lines.map(({ id, color, quantity, gift }) => {
     const product = products.get(id);
     if (!product || product.available === false || !Number.isFinite(product.price) || product.price <= 0 || product.price > 1_000_000) {
       throw new HttpError(409, 'UNAVAILABLE', 'Один із товарів більше недоступний. Оновіть кошик.');
@@ -37,12 +40,23 @@ export function priceLines(lines: CheckoutLine[], products: Map<string, Product>
     }
     const count = (stockRequested.get(id) ?? 0) + quantity;
     stockRequested.set(id, count);
-    if (isTrackedStock(product.stock) && count > product.stock) {
+    const stock = configuredStock(product.stock);
+    if (stock !== undefined && count > stock) {
       throw new HttpError(409, 'UNAVAILABLE', '«' + product.title + '» — доступно ' + product.stock + ' шт.');
     }
+    const finishKey = variantKey(id, color);
+    const finishCount = (finishRequested.get(finishKey) ?? 0) + quantity;
+    finishRequested.set(finishKey, finishCount);
+    const finish = finishStock(product, color);
+    if (finish !== undefined && finishCount > finish) {
+      throw new HttpError(409, 'UNAVAILABLE', '«' + product.title + ' / ' + color + '» — доступно ' + finish + ' шт.');
+    }
+    const surcharge = gift ? giftPrice(product) : 0;
+    if (gift && !surcharge) throw new HttpError(409, 'UNAVAILABLE', 'Подарунковий набір для «' + product.title + '» недоступний.');
     const image = product.imageUrls?.[0] || product.imageUrl;
     return {
-      id, cartItemId: JSON.stringify([id, color ?? '']), title: product.title, price: product.price, unitPrice: unitPrice(product),
+      id, cartItemId: variantKey(id, color, gift), title: product.title, price: product.price, unitPrice: unitPrice(product) + surcharge,
+      ...(gift ? { gift, giftContents: product.giftSet?.contents || 'Паличка, підставка та коробка' } : {}),
       quantity, ...(color ? { selectedColor: color } : {}),
       ...(product.discount ? { discount: product.discount } : {}),
       ...(image ? { imageUrl: image } : {}),
@@ -50,8 +64,10 @@ export function priceLines(lines: CheckoutLine[], products: Map<string, Product>
   });
 }
 
-export function isTrackedStock(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+export interface StockReservation {
+  id: string;
+  quantity: number;
+  finishes?: { color: string; quantity: number }[];
 }
 
 export async function makeQuote(db: Firestore, lines: CheckoutLine[], code: string, transaction?: Transaction) {
@@ -78,7 +94,7 @@ export async function makeQuote(db: Firestore, lines: CheckoutLine[], code: stri
   }
   const quote: Quote = {
     subtotal, total, ...(code ? { promo: code } : {}),
-    lines: items.map(item => ({ id: item.id, color: item.selectedColor ?? '', quantity: item.quantity, unitPrice: item.unitPrice })),
+    lines: items.map(item => ({ id: item.id, color: item.selectedColor ?? '', quantity: item.quantity, unitPrice: item.unitPrice, ...(item.gift ? { gift: true } : {}) })),
   };
   return { quote, items, products, promo };
 }

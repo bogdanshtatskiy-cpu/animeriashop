@@ -35,10 +35,30 @@ export const orderTransitions: Record<OrderStatus, readonly OrderStatus[]> = {
   completed: [], cancelled: [],
 };
 
-export interface CheckoutLine { id: string; quantity: number; color?: string }
+export interface GiftSet { price: number; contents: string }
+
+export function giftPrice(product: { giftSet?: GiftSet | null }) {
+  const price = product.giftSet?.price;
+  return typeof price === 'number' && price > 0 && price <= 1_000_000 ? Math.max(0, toKop(price)) : 0;
+}
+
+export function configuredStock(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+export function finishStock(product: { variantStock?: Record<string, number> | null }, color = '') {
+  const stock = product.variantStock;
+  return stock && Object.hasOwn(stock, color) ? configuredStock(stock[color]) : undefined;
+}
+
+export function variantKey(id: string, color = '', gift = false) {
+  return JSON.stringify(gift ? [id, color, true] : [id, color]);
+}
+
+export interface CheckoutLine { id: string; quantity: number; color?: string; gift?: boolean }
 export interface Quote {
   subtotal: number;
   total: number;
   promo?: string;
-  lines: { id: string; color: string; quantity: number; unitPrice: number }[];
+  lines: (CheckoutLine & { color: string; unitPrice: number })[];
 }

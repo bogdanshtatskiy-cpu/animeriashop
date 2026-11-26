@@ -5,7 +5,7 @@ import { Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
 import { photos, ProductPhoto, WAND_CATEGORY } from '../../components/Product';
 import { db } from '../../firebase';
 import { app } from '../../lib/firebase-app';
-import { money, toKop } from '../../lib/commerce';
+import { finishStock, money, toKop } from '../../lib/commerce';
 import type { Product } from '../../store/useCartStore';
 import { useProductsStore } from '../../store/useProductsStore';
 
@@ -16,12 +16,14 @@ const templates = [
 const blank = {
   title: '', price: '', description: '', category: '', dimensions: '', material: '', colors: '', technology: '' as NonNullable<Product['technology']>,
   finish: '', character: '', stock: '', featured: false, madeToOrder: false, available: false, images: [] as string[],
+  leadDays: '', packageContents: '', giftPrice: '', giftContents: '', variantStock: {} as Record<string, string>,
   discountType: 'percent' as 'percent' | 'fixed', discountValue: '',
 };
 type Draft = typeof blank;
 type Entry = { item: Product; draft: boolean };
 const types = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
 const storage = getStorage(app);
+const colorsFrom = (value: string) => [...new Set(value.split(',').map(color => color.trim()).filter(Boolean))];
 
 async function optimizedPhoto(file: File) {
   if (!types.includes(file.type) || file.size > 20_000_000) throw new Error('Оберіть JPEG, PNG, WebP або AVIF до 20 МБ.');
@@ -68,6 +70,9 @@ export default function AdminProducts() {
       dimensions: item.dimensions ?? '', material: item.material ?? '', colors: item.colors?.join(', ') ?? '', technology: item.technology ?? '',
       finish: item.finish ?? '', character: item.character ?? '', stock: item.stock == null ? '' : String(item.stock),
       featured: Boolean(item.featured), madeToOrder: Boolean(item.madeToOrder), available: !entry.draft && item.available !== false,
+      leadDays: item.leadDays ? String(item.leadDays) : '', packageContents: item.packageContents ?? '',
+      giftPrice: item.giftSet ? String(item.giftSet.price) : '', giftContents: item.giftSet?.contents ?? '',
+      variantStock: Object.fromEntries(Object.entries(item.variantStock ?? {}).map(([key, value]) => [key, String(value)])),
       images: photos(item), discountType: item.discount?.type ?? 'percent', discountValue: item.discount?.value ? String(item.discount.value) : '',
     });
     requestAnimationFrame(() => document.getElementById('product-editor')?.scrollIntoView({ block: 'start' }));
@@ -89,6 +94,7 @@ export default function AdminProducts() {
     finally { setUploading(false); }
   };
 
+  const colors = colorsFrom(form.colors);
   const entries = [...products.map(item => ({ item, draft: false })), ...drafts.map(item => ({ item, draft: true }))];
   const results = entries.filter(({ item }) => (item.title + ' ' + (item.category ?? '')).toLocaleLowerCase('uk').includes(find.toLocaleLowerCase('uk').trim()));
 
@@ -115,13 +121,18 @@ export default function AdminProducts() {
         const payload: Omit<Product, 'id'> = {
           title, price: Number(form.price || 0), category: form.category.trim(), material: form.material.trim(),
           dimensions: form.dimensions.trim(), character: form.character.trim(), technology: form.technology, finish: form.finish.trim(),
-          colors: [...new Set(form.colors.split(',').map(color => color.trim()).filter(Boolean))],
+          colors, variantStock: Object.fromEntries(colors.flatMap(color => {
+            const input = Object.hasOwn(form.variantStock, color) ? form.variantStock[color] : '';
+            return input === '' ? [] : [[color, Number(input)]];
+          })),
+          leadDays: form.leadDays ? Number(form.leadDays) : null, packageContents: form.packageContents.trim(),
+          giftSet: form.giftPrice ? { price: Number(form.giftPrice), contents: form.giftContents.trim() } : null,
           description: form.description.trim(), stock, featured: form.featured, available: form.available, madeToOrder: form.madeToOrder,
           imageUrls: form.images, imageUrl: form.images[0] ?? null,
           discount: Number(form.discountValue) ? { type: form.discountType, value: Number(form.discountValue) } : null,
         };
-        if (payload.colors?.some(color => color.length > 80)) {
-          setError('Кожен варіант має містити до 80 символів.'); setBusy(false); return;
+        if (colors.some(color => color.length > 80 || /^__.*__$/.test(color))) {
+          setError('Кожен варіант має містити до 80 символів і не може починатись і завершуватись двома підкресленнями.'); setBusy(false); return;
         }
         try {
           await runTransaction(db, async tx => {
@@ -133,6 +144,17 @@ export default function AdminProducts() {
               const before = editing.item.stock ?? null;
               if (stock !== before && before !== currentStock) throw new Error('Залишок змінився після відкриття форми. Відкрийте виріб ще раз.');
               if (stock === before) product = { ...product, stock: currentStock };
+              const variantStock = new Map(Object.entries(payload.variantStock ?? {}));
+              const currentVariantStock = { variantStock: latest.get('variantStock') as Product['variantStock'] };
+              for (const color of colors) {
+                const original = finishStock(editing.item, color);
+                const current = finishStock(currentVariantStock, color);
+                const next = variantStock.get(color);
+                if (next !== original && original !== current) throw new Error('Залишок варіанта змінився. Відкрийте виріб ще раз.');
+                if (next === original && current !== undefined) variantStock.set(color, current);
+                if (next === original && current === undefined) variantStock.delete(color);
+              }
+              product = { ...product, variantStock: Object.fromEntries(variantStock) };
               if (target.path !== source.path) tx.delete(source);
             }
             tx.set(target, product);
@@ -163,6 +185,27 @@ export default function AdminProducts() {
             <label className="field-label">Знижка<span className="admin-discount"><select aria-label="Тип знижки" className="field" value={form.discountType} onChange={e => set('discountType', e.target.value as Draft['discountType'])}><option value="percent">%</option><option value="fixed">грн</option></select>
               <input className="field" aria-label="Розмір знижки" type="number" min="0" max={form.discountType === 'percent' ? 100 : form.price || 1_000_000} step="0.01" value={form.discountValue} onChange={e => set('discountValue', e.target.value)} /></span></label>
           </div>
+          {colors.length > 0 && <fieldset className="product-settings">
+            <legend>Залишки за оздобленням</legend>
+            <div className="admin-field-grid">{colors.map(color => <label className="field-label" key={color}>{color}
+              <input className="field" type="number" min="0" max="999999" step="1" placeholder="Без окремого обліку"
+                value={Object.hasOwn(form.variantStock, color) ? form.variantStock[color] : ''}
+                onChange={e => set('variantStock', { ...form.variantStock, [color]: e.target.value })} />
+            </label>)}</div>
+          </fieldset>}
+          <fieldset className="product-settings">
+            <legend>Комплектація та готовність</legend>
+            <label className="field-label">Що входить у базову ціну<input className="field" maxLength={240}
+              value={form.packageContents} onChange={e => set('packageContents', e.target.value)} placeholder="Наприклад, паличка та захисне пакування" /></label>
+            <div className="admin-field-grid">
+              <label className="field-label">До відправлення, днів<input className="field" type="number" min="1" max="365" step="1"
+                value={form.leadDays} onChange={e => set('leadDays', e.target.value)} /></label>
+              <label className="field-label">Доплата за подарунковий набір, грн<input className="field" type="number" min="0.01" max="1000000" step="0.01"
+                placeholder="Порожнє поле вимикає набір" value={form.giftPrice} onChange={e => set('giftPrice', e.target.value)} /></label>
+            </div>
+            {form.giftPrice && <label className="field-label">Що входить у подарунковий набір<input className="field" maxLength={240}
+              placeholder="Паличка, підставка та коробка" value={form.giftContents} onChange={e => set('giftContents', e.target.value)} /></label>}
+          </fieldset>
           <label className="field-label">Опис<textarea className="field" rows={4} maxLength={1800} value={form.description} onChange={e => set('description', e.target.value)} /></label>
           <label className="upload-zone"><Upload size={19} /> {uploading ? 'Завантажуємо…' : 'Додати фото або вставити з буфера'}
             <input type="file" multiple accept={types.join(',')} disabled={form.images.length >= 8} onChange={event => {
