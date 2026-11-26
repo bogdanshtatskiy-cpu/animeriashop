@@ -281,8 +281,8 @@ fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
 .detail-total strong { color: var(--gold); font-size: clamp(1rem, 4.5vw, 1.28rem); }
 .detail-cta { min-height: 46px; padding-inline: 11px; line-height: 1.2; }
 .detail-cta svg { flex: none; }
-.detail-status:empty { display: none; }
-.detail-status { color: var(--gold); font-size: 12px; min-height: 18px; margin-top: 4px; text-align: center; }
+.detail-status { color: var(--gold); font-size: 12px; text-align: center; }
+.detail-status:not(:empty) { margin-top: 4px; }
 
 .checkout-layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: start; gap: 17px; }
 .checkout-main { display: grid; gap: 15px; }

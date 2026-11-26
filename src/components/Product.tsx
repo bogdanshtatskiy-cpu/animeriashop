@@ -148,7 +148,7 @@ export function ProductDetail({ product, onClose, onAdd }: { product: Product; o
           <Price product={product} surcharge={giftSelected ? surcharge : 0} />
           <div className="detail-readiness" aria-live="polite">
             <span className={'stock' + (sold ? ' sold' : '')}>{available}</span>
-            {!sold && <span>{readyDays > 0 ? 'До відправлення · до ' + readyDays + ' дн.' : 'Термін відправлення уточнюється'}</span>}
+            {!sold && <span>{readyDays > 0 ? 'Відправлення до ' + readyDays + ' дн.' : 'Термін відправлення уточнюється'}</span>}
           </div>
           {Boolean(product.colors?.length) && <fieldset className="variants"><legend>Оздоблення</legend>
             {product.colors?.map(option => <label key={option} className="filter-pill">
@@ -182,7 +182,7 @@ export function ProductDetail({ product, onClose, onAdd }: { product: Product; o
             {sold ? 'Недоступно' : 'Додати в кошик'}
           </button>
         </div>
-        <div className="detail-status" role="status">{status} {status === 'Додано до кошика.' && <Link className="text-button" to="/cart">До кошика</Link>}</div>
+        <div className="detail-status" role="status">{status}{status === 'Додано до кошика.' && <> <Link className="text-button" to="/cart">До кошика</Link></>}</div>
       </div>
     </div>
   </dialog>;

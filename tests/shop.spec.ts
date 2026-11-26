@@ -49,7 +49,7 @@ test('mobile catalog, synced favorites, checkout, and order history', async ({ p
   await expect(detail.getByText('Ручне фарбування')).toBeVisible();
   await detail.getByRole('button', { name: 'Наступне фото' }).click();
   await expect(detail.getByRole('button', { name: 'Фото 2' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(detail.getByText('До відправлення · до 4 дн.')).toBeVisible();
+  await expect(detail.getByText('Відправлення до 4 дн.')).toBeVisible();
   await expect(detail.getByText('Паличка та захисне пакування')).toBeVisible();
   await detail.getByText('Графіт', { exact: true }).click();
   await expect(detail.getByRole('button', { name: 'Недоступно' })).toBeDisabled();
